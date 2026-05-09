@@ -1,0 +1,126 @@
+using System.Text;
+
+using Microsoft.Extensions.Primitives;
+namespace FolderWatcher.Service;
+
+public class Worker : BackgroundService
+{
+    private readonly ILogger<Worker> _logger;
+    private readonly IConfiguration _configuration;
+    private readonly List<FileSystemWatcher> _watchers = new();
+
+    public Worker(ILogger<Worker> logger, IConfiguration configuration)
+    {
+        _logger = logger;
+        _configuration = configuration;
+    }
+
+    protected override Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        _logger.LogInformation("Сервис мониторинга запущен.");
+        
+        StartWatchers();
+
+        // Подписываемся на изменение самого конфига appsettings.json
+        ChangeToken.OnChange(
+            () => _configuration.GetReloadToken(),
+            () => {
+                _logger.LogInformation("Конфигурация изменена, перезапуск наблюдателей...");
+                StartWatchers();
+            });
+
+        return Task.CompletedTask;
+    }
+
+    private void StartWatchers()
+    {
+        foreach (var w in _watchers) { w.EnableRaisingEvents = false; w.Dispose(); }
+        _watchers.Clear();
+
+        var paths = _configuration.GetSection("WatcherSettings:SourceDirectories").Get<string[]>();
+        if (paths == null) return;
+
+        foreach (var path in paths)
+        {
+            if (!Directory.Exists(path)) continue;
+
+            // 1. Сначала обрабатываем то, что уже лежит в папке
+            InitialScan(path);
+
+            // 2. Затем настраиваем слежку за новыми изменениями
+            var watcher = new FileSystemWatcher(path, "*.*")
+            {
+                NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName | NotifyFilters.Size
+            };
+
+            watcher.Changed += (s, e) => ProcessFile(e.FullPath);
+            watcher.Created += (s, e) => ProcessFile(e.FullPath);
+            watcher.Renamed += (s, e) => ProcessFile(e.FullPath);
+            
+            watcher.EnableRaisingEvents = true;
+            _watchers.Add(watcher);
+            _logger.LogInformation($"Мониторинг запущен для: {path}");
+        }
+    }
+
+    // Новый метод для обработки существующих файлов
+    private void InitialScan(string path)
+    {
+        _logger.LogInformation($"Сканирование папки на наличие существующих файлов: {path}");
+        
+        // Получаем все файлы, заканчивающиеся на .net (любого регистра)
+        var existingFiles = Directory.EnumerateFiles(path, "*.*")
+                            .Where(f => f.EndsWith(".net", StringComparison.OrdinalIgnoreCase));
+
+        foreach (var file in existingFiles)
+        {
+            _logger.LogInformation($"Найден существующий файл: {Path.GetFileName(file)}");
+            ProcessFile(file);
+        }
+}    
+
+    private void ProcessFile(string filePath)
+    {
+        if (!filePath.EndsWith(".net", StringComparison.OrdinalIgnoreCase))
+        {
+            return; 
+        }
+
+        try
+        {
+            // 1. Определяем путь к папке "txt" внутри текущей директории
+            string directory = Path.GetDirectoryName(filePath)!;
+            string txtFolder = Path.Combine(directory, "txt");
+
+            // 2. Создаем папку, если её еще нет (Directory.CreateDirectory не выдаст ошибку, если она уже есть)
+            if (!Directory.Exists(txtFolder))
+            {
+                Directory.CreateDirectory(txtFolder);
+            }
+
+            Thread.Sleep(500); // Оставляем задержку для Windows
+
+            // 3. Читаем контент
+            string content = File.ReadAllText(filePath);
+            
+            // 4. Формируем новый путь: папка "txt" + старое имя, но с расширением .txt
+            string fileName = Path.GetFileNameWithoutExtension(filePath) + ".txt";
+            string targetPath = Path.Combine(txtFolder, fileName);
+
+            // 5. Сохраняем
+            File.WriteAllText(targetPath, content, Encoding.UTF8);
+
+            _logger.LogInformation($"Готово: {Path.GetFileName(filePath)} -> txt/{fileName}");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError($"Ошибка при обработке {filePath}: {ex.Message}");
+        }
+    }
+
+    public override void Dispose()
+    {
+        foreach (var w in _watchers) w.Dispose();
+        base.Dispose();
+    }
+}

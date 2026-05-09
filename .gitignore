@@ -1,0 +1,35 @@
+# --- .NET (Binaries, Cache, Temp) ---
+[Bb]in/
+[Oo]bj/
+out/
+publish/
+.cache/
+
+# --- Visual Studio Code ---
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+*.code-workspace
+
+# --- User-specific files ---
+*.rsuser
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# --- Your Service Folders (FolderWatcher) ---
+# Игнорируем папку с результатами обработки, чтобы не забивать репозиторий
+txt/
+# Если у вас есть локальные настройки в appsettings
+appsettings.Development.json
+
+# --- OS generated files ---
+.DS_Store
+Thumbs.db
+
+# --- Logs ---
+*.log
+logs/
