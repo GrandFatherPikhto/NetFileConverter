@@ -1,6 +1,5 @@
 using System.Text.Json;
 using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.Primitives;
 
 namespace FolderWatcher.Service
 {
@@ -13,20 +12,26 @@ namespace FolderWatcher.Service
         private Button _saveButton = null!;
         private IConfigurationRoot _configuration = null!;
 
+        // Возвращает тот же путь, что и в Program.cs
+        private static string GetConfigPath()
+        {
+            string appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+            string appFolder = Path.Combine(appData, "NetFileConverter");
+            if (!Directory.Exists(appFolder))
+                Directory.CreateDirectory(appFolder);
+            return Path.Combine(appFolder, "appsettings.json");
+        }
+
         public SettingsForm()
         {
             InitializeComponent();
-            // _configPath = Path.Combine(AppContext.BaseDirectory, "appsettings.json");
-            // _configPath = Path.Combine(exeDir, "appsettings.json");
-            // Гарантированно берем папку, где лежит сам файл NetFileConverter.exe
-            string exePath = System.Environment.ProcessPath ?? AppContext.BaseDirectory;
-            string exeDir = Path.GetDirectoryName(exePath) ?? AppContext.BaseDirectory;
-            _configPath = Path.Combine(exeDir, "appsettings.json");            
+            _configPath = GetConfigPath();
             LoadSettings();
         }
 
         private void InitializeComponent()
         {
+            // ... (без изменений, как в исходном коде)
             this.Text = "Настройки Folder Watcher";
             this.Size = new Size(400, 300);
             this.StartPosition = FormStartPosition.CenterScreen;
@@ -54,13 +59,9 @@ namespace FolderWatcher.Service
 
         private void LoadSettings()
         {
-            string exePath = System.Environment.ProcessPath ?? AppContext.BaseDirectory;
-            string exeDir = Path.GetDirectoryName(exePath) ?? AppContext.BaseDirectory;
-
-            // Перезагружаем конфигурацию из файла
             var builder = new ConfigurationBuilder()
-                .SetBasePath(AppContext.BaseDirectory)
-                .AddJsonFile("appsettings.json", optional: true, reloadOnChange: true);
+                .SetBasePath(Path.GetDirectoryName(_configPath))
+                .AddJsonFile(Path.GetFileName(_configPath), optional: true, reloadOnChange: true);
             _configuration = builder.Build();
 
             var directories = _configuration.GetSection("WatcherSettings:SourceDirectories").Get<string[]>() ?? Array.Empty<string>();
@@ -90,7 +91,6 @@ namespace FolderWatcher.Service
             try
             {
                 var directories = _listBox.Items.Cast<string>().ToArray();
-                // Читаем текущий JSON
                 string json = File.ReadAllText(_configPath);
                 var doc = JsonDocument.Parse(json);
                 var root = doc.RootElement;
@@ -108,7 +108,6 @@ namespace FolderWatcher.Service
                         foreach (var dir in directories)
                             writer.WriteStringValue(dir);
                         writer.WriteEndArray();
-                        // копируем остальные поля WatcherSettings, если они есть
                         foreach (var innerProp in property.Value.EnumerateObject())
                         {
                             if (innerProp.Name != "SourceDirectories")
@@ -125,8 +124,6 @@ namespace FolderWatcher.Service
                 writer.Flush();
                 File.WriteAllBytes(_configPath, stream.ToArray());
 
-                // Уведомляем фоновую службу об изменениях – через IConfiguration reload
-                // Worker уже подписан на GetReloadToken, он сам перезапустит наблюдателей
                 MessageBox.Show("Настройки сохранены. Сервис автоматически применит их через несколько секунд.", "Успех", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 this.Close();
             }
