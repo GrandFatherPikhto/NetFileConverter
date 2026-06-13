@@ -16,7 +16,6 @@ SetupIconFile=D:\Projects\DotNet\NetFileConverter\icons\netlists.ico
 
 [Files]
 Source: "D:\Projects\DotNet\NetFileConverter\bin\Release\net8.0-windows\win-x64\publish\NetFileConverter.exe"; DestDir: "{app}"; Flags: ignoreversion
-Source: "D:\Projects\DotNet\NetFileConverter\bin\Release\net8.0-windows\win-x64\publish\appsettings.json"; DestDir: "{app}"; Flags: onlyifdoesntexist
 
 [Icons]
 Name: "{group}\NetFileConverter"; Filename: "{app}\NetFileConverter.exe"

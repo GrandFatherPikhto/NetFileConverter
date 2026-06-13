@@ -5,8 +5,11 @@ using FolderWatcher.Service;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging.Console;
+using Microsoft.Extensions.Logging;
 using System.IO;
 using System.Text.Json;
+
 namespace FolderWatcher
 {
     internal static class Program
@@ -43,7 +46,7 @@ namespace FolderWatcher
                 return;
             }
 
-            // Создаём конфиг по умолчанию: пустой список папок
+            // Создаём конфиг по умолчанию: новый формат (массив объектов)
             var defaultConfig = new
             {
                 Logging = new
@@ -56,7 +59,7 @@ namespace FolderWatcher
                 },
                 WatcherSettings = new
                 {
-                    SourceDirectories = Array.Empty<string>()
+                    SourceDirectories = Array.Empty<object>()
                 }
             };
             string json = JsonSerializer.Serialize(defaultConfig, new JsonSerializerOptions { WriteIndented = true });
@@ -77,18 +80,23 @@ namespace FolderWatcher
             string exeDir = Path.GetDirectoryName(exePath) ?? AppContext.BaseDirectory;
             Directory.SetCurrentDirectory(exeDir);
 
-            // Строим хост вручную, чтобы указать путь к конфигурации в AppData
+            // Строим хост с указанием пути к конфигурации в AppData
             var builder = new HostBuilder()
                 .ConfigureAppConfiguration((context, config) =>
                 {
-                    // Основной источник – appsettings.json в AppData
                     config.SetBasePath(Path.GetDirectoryName(configPath));
                     config.AddJsonFile(Path.GetFileName(configPath), optional: false, reloadOnChange: true);
 
-                    // Для удобства разработки – если файл есть рядом с exe, добавим его как fallback (низкий приоритет)
+                    // Резервный конфиг из папки с exe (только для разработки)
                     string localConfig = Path.Combine(exeDir, "appsettings.json");
                     if (File.Exists(localConfig))
                         config.AddJsonFile(localConfig, optional: true, reloadOnChange: false);
+                })
+                .ConfigureLogging(logging =>
+                {
+                    logging.SetMinimumLevel(LogLevel.Information);
+                    logging.AddConsole();
+                    logging.AddDebug();
                 })
                 .ConfigureServices((context, services) =>
                 {
@@ -99,7 +107,7 @@ namespace FolderWatcher
             _host = builder.Build();
             _host.StartAsync().GetAwaiter().GetResult();
 
-            // Иконка трея – из основного exe
+            // Иконка трея
             _trayIcon = new NotifyIcon
             {
                 Icon = Icon.ExtractAssociatedIcon(System.Environment.ProcessPath ?? AppContext.BaseDirectory),
