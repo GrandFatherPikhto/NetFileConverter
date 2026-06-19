@@ -36,6 +36,22 @@ namespace FolderWatcher.Service
             LoadSettings();
         }
 
+        // Вспомогательный метод
+        private string NormalizePath(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+                return path;
+            path = path.TrimEnd('\\', '/');
+            try
+            {
+                return Path.GetFullPath(path);
+            }
+            catch
+            {
+                return path;
+            }
+        }    
+
         private void InitializeComponent()
         {
             this.Text = "Настройки Folder Watcher";
@@ -86,7 +102,7 @@ namespace FolderWatcher.Service
                     {
                         directories.Add(new SourceDirectory
                         {
-                            Path = path,
+                            Path = NormalizePath(path),
                             Format = string.IsNullOrEmpty(format) ? "Protel2" : format
                         });
                     }
@@ -141,13 +157,16 @@ namespace FolderWatcher.Service
 
                 if (fmtForm.ShowDialog() == DialogResult.OK)
                 {
+                    string normalizedPath = NormalizePath(dialog.SelectedPath);
                     var newDir = new SourceDirectory
                     {
-                        Path = dialog.SelectedPath,
+                        Path = normalizedPath,
                         Format = combo.SelectedItem?.ToString() ?? "Protel2"
                     };
-                    // Проверка на дубликат
-                    bool exists = _listBox.Items.Cast<SourceDirectory>().Any(d => d.Path.Equals(newDir.Path, StringComparison.OrdinalIgnoreCase));
+
+                    bool exists = _listBox.Items.Cast<SourceDirectory>()
+                        .Any(d => d.Path.Equals(newDir.Path, StringComparison.OrdinalIgnoreCase));
+
                     if (!exists)
                         _listBox.Items.Add(newDir);
                     else

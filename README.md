@@ -102,6 +102,19 @@ dotnet build
 dotnet publish -c Release -r win-x64 --self-contained true /p:PublishSingleFile=true /p:PublishReadyToRun=true /p:IncludeNativeLibrariesForSelfExtract=true
 ```
 
+или, если прежний .sln-файл содержит конфигурацию старого проекта (проект был обновлён)
+
+```bash
+ dotnet publish NetFileConverter.csproj -c Release -r win-x64 --self-contained true /p:PublishSingleFile=true /p:PublishReadyToRun=true /p:IncludeNativeLibrariesForSelfExtract=true
+```
+
+Так же, можно обновить .sln файл:
+
+```bash
+dotnet new sln -n NetFileConverter
+dotnet sln add NetFileConverter.csproj
+```
+
 Результат: `bin\Release\net8.0-windows\win-x64\publish\NetFileConverter.exe`
 
 > **Важно:** `appsettings.json` из папки публикации не используется – программа при первом запуске создаст свой конфиг в `%APPDATA%\NetFileConverter\`. Это гарантирует, что обычный пользователь сможет изменять настройки даже при установке в `Program Files`.
