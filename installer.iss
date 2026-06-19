@@ -1,7 +1,8 @@
 [Setup]
 AppName=NetFileConverter
-AppVersion=1.0
+AppVersion=1.3
 ; ИСПРАВЛЕНО: Используем актуальную константу commonpf
+ArchitecturesInstallIn64BitMode=x64compatible
 DefaultDirName={commonpf}\NetFileConverter
 DefaultGroupName=NetFileConverter
 UninstallDisplayIcon={app}\NetFileConverter.exe
