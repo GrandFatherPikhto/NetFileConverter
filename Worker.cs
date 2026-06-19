@@ -315,8 +315,16 @@ public class Worker : BackgroundService
                     if (!string.IsNullOrEmpty(refDes) && !string.IsNullOrEmpty(pin))
                         net.Pins.Add($"{refDes}-{pin}");
                 }
-                if (!string.IsNullOrEmpty(net.NetName) && net.Pins.Count > 0)
+
+                // ===== ИСПРАВЛЕННАЯ ФИЛЬТРАЦИЯ =====
+                bool isUnconnected = net.NetName.Contains("unconnected", StringComparison.OrdinalIgnoreCase) ||
+                                     net.NetName.Contains("no net", StringComparison.OrdinalIgnoreCase) ||
+                                     string.IsNullOrWhiteSpace(net.NetName);
+
+                if (!isUnconnected && net.Pins.Count > 0)
+                {
                     result.Nets.Add(net);
+                }
             }
         }
         return result;
@@ -414,7 +422,7 @@ public class Worker : BackgroundService
     {
         var child = FindChild(node, childName);
         if (child != null)
-            return GetStringValue(child); // используем общий метод с очисткой кавычек
+            return GetStringValue(child);
         return null;
     }
 
