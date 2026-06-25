@@ -1,0 +1,90 @@
+=== BOM (Список компонентов) для Control_Board_EPM240.net ===
+
+Компонент    | Номинал                   | Корпус (Footprint)            
+-------------------------------------------------------------------------
+C1           | 470uF 35V                 | CP_Radial_D10.0mm_P5.00mm     
+C2           | 100nF                     | C_0603_1608Metric_Pad1.08x0.95mm_HandSolder
+C3           | 470uF 16V                 | CP_Radial_D10.0mm_P5.00mm     
+C4           | 100nF                     | C_0603_1608Metric_Pad1.08x0.95mm_HandSolder
+C5           | 100uF 16V                 | CP_EIA-6032-15_Kemet-U        
+C6           | 100nF                     | C_0603_1608Metric_Pad1.08x0.95mm_HandSolder
+C7           | 100nF                     | C_0603_1608Metric_Pad1.08x0.95mm_HandSolder
+C8           | 100nF                     | C_0603_1608Metric_Pad1.08x0.95mm_HandSolder
+C9           | 100nF                     | C_0603_1608Metric_Pad1.08x0.95mm_HandSolder
+C10          | 100nF                     | C_0603_1608Metric_Pad1.08x0.95mm_HandSolder
+C11          | 100nF                     | C_0603_1608Metric_Pad1.08x0.95mm_HandSolder
+C12          | 100nF                     | C_0603_1608Metric_Pad1.08x0.95mm_HandSolder
+C13          | 100nF                     | C_0603_1608Metric_Pad1.08x0.95mm_HandSolder
+C14          | 100nF                     | C_0603_1608Metric_Pad1.08x0.95mm_HandSolder
+C15          | 100nF                     | C_0603_1608Metric_Pad1.08x0.95mm_HandSolder
+C16          | 100nF                     | C_0603_1608Metric_Pad1.08x0.95mm_HandSolder
+C17          | 10nF                      | C_1210_3225Metric_Pad1.33x2.70mm_HandSolder
+C18          | 10nF                      | C_1210_3225Metric_Pad1.33x2.70mm_HandSolder
+C19          | 100nF                     | C_0603_1608Metric_Pad1.08x0.95mm_HandSolder
+C20          | 100nF                     | C_0603_1608Metric_Pad1.08x0.95mm_HandSolder
+C21          | 100nF                     | C_0603_1608Metric_Pad1.08x0.95mm_HandSolder
+C22          | 1uF                       | C_1206_3216Metric_Pad1.33x1.80mm_HandSolder
+C23          | 100nF                     | C_0603_1608Metric_Pad1.08x0.95mm_HandSolder
+D1           | BAT54S                    | SOT-23                        
+D2           | BAT54S                    | SOT-23                        
+D3           | LED                       | D_0805_2012Metric_Pad1.15x1.40mm_HandSolder
+D4           | LED                       | D_0805_2012Metric_Pad1.15x1.40mm_HandSolder
+D5           | BAT54S                    | SOT-23                        
+D6           | LED                       | D_0805_2012Metric_Pad1.15x1.40mm_HandSolder
+D7           | BAT54S                    | SOT-23                        
+D8           | LED                       | D_0805_2012Metric_Pad1.15x1.40mm_HandSolder
+FB1          | FerriteBead               | R_0805_2012Metric_Pad1.20x1.40mm_HandSolder
+H1           | MountingHole              | MountingHole_3.2mm_M3         
+H2           | MountingHole              | MountingHole_3.2mm_M3         
+H3           | MountingHole              | MountingHole_3.2mm_M3         
+H4           | MountingHole              | MountingHole_3.2mm_M3         
+J1           | 12V In                    | JST_XH_B2B-XH-AM_1x02_P2.50mm_Vertical
+J2           | JTAG                      | IDC-Header_2x05_P2.54mm_Vertical
+J3           | Signal In                 | JST_XH_B2B-XH-AM_1x02_P2.50mm_Vertical
+J4           | Signal Out/Fault In       | JST_XH_B6B-XH-AM_1x06_P2.50mm_Vertical
+J5           | Permission Led            | JST_XH_B2B-XH-AM_1x02_P2.50mm_Vertical
+J6           | Enable                    | JST_XH_B3B-XH-AM_1x03_P2.50mm_Vertical
+J7           | TST PWM Signal            | JST_XH_B3B-XH-AM_1x03_P2.50mm_Vertical
+J8           | Power Led                 | JST_XH_B2B-XH-AM_1x02_P2.50mm_Vertical
+J9           | PWM Led                   | JST_XH_B3B-XH-AM_1x03_P2.50mm_Vertical
+PS1          | B0503S-2W                 | B0303S2W                      
+R1           | 10K                       | R_0603_1608Metric_Pad0.98x0.95mm_HandSolder
+R2           | 10K                       | R_0603_1608Metric_Pad0.98x0.95mm_HandSolder
+R3           | 10K                       | R_0603_1608Metric_Pad0.98x0.95mm_HandSolder
+R4           | 10K                       | R_0603_1608Metric_Pad0.98x0.95mm_HandSolder
+R5           | R1K                       | R_0603_1608Metric_Pad0.98x0.95mm_HandSolder
+R6           | 10K                       | R_0603_1608Metric_Pad0.98x0.95mm_HandSolder
+R7           | 330                       | R_0603_1608Metric_Pad0.98x0.95mm_HandSolder
+R8           | 10K                       | R_0603_1608Metric_Pad0.98x0.95mm_HandSolder
+R9           | 10K                       | R_0603_1608Metric_Pad0.98x0.95mm_HandSolder
+R10          | 10K                       | R_0603_1608Metric_Pad0.98x0.95mm_HandSolder
+R11          | 10K                       | R_0603_1608Metric_Pad0.98x0.95mm_HandSolder
+R12          | 10K                       | R_0603_1608Metric_Pad0.98x0.95mm_HandSolder
+R13          | 10K                       | R_0603_1608Metric_Pad0.98x0.95mm_HandSolder
+R14          | 10K                       | R_0603_1608Metric_Pad0.98x0.95mm_HandSolder
+R15          | 10K                       | R_0603_1608Metric_Pad0.98x0.95mm_HandSolder
+R16          | 10K                       | R_0603_1608Metric_Pad0.98x0.95mm_HandSolder
+R17          | 10K                       | R_0603_1608Metric_Pad0.98x0.95mm_HandSolder
+R18          | 220R                      | R_0603_1608Metric_Pad0.98x0.95mm_HandSolder
+R19          | 10K                       | R_0603_1608Metric_Pad0.98x0.95mm_HandSolder
+R20          | 330R                      | R_0603_1608Metric_Pad0.98x0.95mm_HandSolder
+R21          | 1K                        | R_0603_1608Metric_Pad0.98x0.95mm_HandSolder
+R22          | 330                       | R_0603_1608Metric_Pad0.98x0.95mm_HandSolder
+R23          | 1K5                       | R_0603_1608Metric_Pad0.98x0.95mm_HandSolder
+R24          | 470                       | R_0603_1608Metric_Pad0.98x0.95mm_HandSolder
+R25          | 330                       | R_0603_1608Metric_Pad0.98x0.95mm_HandSolder
+R26          | 1K                        | R_0603_1608Metric_Pad0.98x0.95mm_HandSolder
+R27          | 1K                        | R_0603_1608Metric_Pad0.98x0.95mm_HandSolder
+R28          | 330                       | R_0603_1608Metric_Pad0.98x0.95mm_HandSolder
+R29          | 33                        | R_0603_1608Metric_Pad0.98x0.95mm_HandSolder
+R30          | 33                        | R_0603_1608Metric_Pad0.98x0.95mm_HandSolder
+R32          | 10K                       | R_0603_1608Metric_Pad0.98x0.95mm_HandSolder
+SW1          | Config                    | SW_DIP_SPSTx10_Slide_9.78x27.58mm_W7.62mm_P2.54mm
+U1           | ~                         | Converter_DC-DC_Mini360       
+U2           | AMS1117CD-3.3             | TO-252-3_TabPin2              
+U3           | EPM240T100                | LQFP-100_14x14mm_P0.5mm       
+U4           | 74HC14                    | SOIC-14_3.9x8.7mm_P1.27mm     
+U5           | ISO7720D                  | SOIC-8_3.9x4.9mm_P1.27mm      
+U6           | 74HC14                    | SOIC-14_3.9x8.7mm_P1.27mm     
+U7           | 74HC14                    | SOIC-14_3.9x8.7mm_P1.27mm     
+Y1           | XO91                      | Oscillator_SMD_EuroQuartz_XO91-4Pin_7.0x5.0mm
