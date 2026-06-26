@@ -1,613 +1,277 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
 using System.Text;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.Primitives;
+using System.Threading;
+using System.Threading.Tasks;
 
-namespace FolderWatcher.Service;
-
-public class SourceDirectory
+namespace NetFileConverter
 {
-    public string Path { get; set; } = "";
-    public string Format { get; set; } = "Protel2";
-}
-
-public class Worker : BackgroundService
-{
-    private readonly ILogger<Worker> _logger;
-    private readonly IConfiguration _configuration;
-    private readonly List<(FileSystemWatcher Watcher, string Format)> _watchers = new();
-
-    public Worker(ILogger<Worker> logger, IConfiguration configuration)
+    public class Worker : BackgroundService
     {
-        _logger = logger;
-        _configuration = configuration;
-    }
-
-    protected override Task ExecuteAsync(CancellationToken stoppingToken)
-    {
-        _logger.LogInformation("Сервис мониторинга запущен.");
-        StartWatchers();
-
-        ChangeToken.OnChange(
-            () => _configuration.GetReloadToken(),
-            () =>
-            {
-                _logger.LogInformation("Конфигурация изменена, перезапуск наблюдателей...");
-                StartWatchers();
-            });
-
-        return Task.CompletedTask;
-    }
-
-    private void StartWatchers()
-    {
-        foreach (var (w, _) in _watchers)
+        // Удаляет суффиксы секций KiCad (U1A -> U1)
+        private string CleanRef(string refName)
         {
-            w.EnableRaisingEvents = false;
-            w.Dispose();
-        }
-        _watchers.Clear();
-
-        var dirs = GetSourceDirectories();
-        if (dirs == null || dirs.Count == 0)
-        {
-            _logger.LogWarning("Нет отслеживаемых папок в конфигурации.");
-            return;
+            var match = Regex.Match(refName, @"^([A-Z]+\d+)[A-Z]?$");
+            return match.Success ? match.Groups[1].Value : refName;
         }
 
-        foreach (var dir in dirs)
-        {
-            string folder = dir.Path;
-            string format = NormalizeFormat(dir.Format);
 
-            if (File.Exists(folder))
+        protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+        {
+            // Здесь должна быть логика запуска первоначального анализа и включения watchdog,
+            // которую мы писали в Python-версии. Например:
+
+            Console.WriteLine("Фоновая служба парсера KiCad успешно запущена.");
+
+            // Держим службу запущенной, пока приложение не закроют
+            while (!stoppingToken.IsCancellationRequested)
             {
-                folder = Path.GetDirectoryName(folder)!;
-                _logger.LogInformation($"Путь '{dir.Path}' является файлом, наблюдаем папку '{folder}'");
+                await Task.Delay(1000, stoppingToken);
             }
-
-            if (!Directory.Exists(folder))
-            {
-                _logger.LogWarning($"Папка не существует: {folder}");
-                continue;
-            }
-
-            InitialScan(folder, format);
-
-            var watcher = new FileSystemWatcher(folder, "*.*")
-            {
-                NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName | NotifyFilters.Size,
-                EnableRaisingEvents = true
-            };
-
-            watcher.Changed += (s, e) => ProcessFile(e.FullPath, format);
-            watcher.Created += (s, e) => ProcessFile(e.FullPath, format);
-            watcher.Renamed += (s, e) => ProcessFile(e.FullPath, format);
-
-            _watchers.Add((watcher, format));
-            _logger.LogInformation($"Мониторинг запущен для: {folder} [формат: {format}]");
-        }
-    }
-
-    private List<SourceDirectory> GetSourceDirectories()
-    {
-        var section = _configuration.GetSection("WatcherSettings:SourceDirectories");
-        var result = new List<SourceDirectory>();
-
-        var typed = section.Get<List<SourceDirectory>>();
-        if (typed != null && typed.Count > 0)
-            return typed;
-
-        var strings = section.Get<string[]>();
-        if (strings != null)
-        {
-            foreach (var s in strings)
-                result.Add(new SourceDirectory { Path = s, Format = "Protel2" });
         }
 
-        return result;
-    }
-
-    private string NormalizeFormat(string format)
-    {
-        if (string.IsNullOrEmpty(format)) return "Protel2";
-        if (format.Contains("KiCad", StringComparison.OrdinalIgnoreCase))
-            return "KiCad";
-        return "Protel2";
-    }
-
-    private void InitialScan(string path, string format)
-    {
-        _logger.LogInformation($"Сканирование папки {path} (формат {format}) на наличие .net файлов...");
-        var files = Directory.EnumerateFiles(path, "*.*")
-                    .Where(f => f.EndsWith(".net", StringComparison.OrdinalIgnoreCase));
-        foreach (var file in files)
+        // Проверяет, является ли элемент списком, который начинается с нужного тега
+        private bool IsTag(object item, string tag)
         {
-            _logger.LogInformation($"Найден существующий файл: {Path.GetFileName(file)}");
-            ProcessFile(file, format);
+            return item is List<object> list && list.Count > 0 && list[0] is string s && s == tag;
         }
-    }
 
-    private void ProcessFile(string filePath, string format)
-    {
-        if (!filePath.EndsWith(".net", StringComparison.OrdinalIgnoreCase)) return;
-
-        try
+        // Безопасное извлечение текстового значения для тега из блока
+        private string GetValueForTag(List<object> block, string tag)
         {
-            Thread.Sleep(500);
-
-            string directory = Path.GetDirectoryName(filePath)!;
-            string outFolder = Path.Combine(directory, "out");
-            if (!Directory.Exists(outFolder)) Directory.CreateDirectory(outFolder);
-
-            string baseName = Path.GetFileNameWithoutExtension(filePath);
-
-            string origPath = Path.Combine(outFolder, baseName + "_orig.txt");
-            File.Copy(filePath, origPath, overwrite: true);
-
-            var lines = File.ReadAllLines(filePath);
-            ParseResult parseResult;
-
-            if (format == "KiCad")
-                parseResult = ParseKiCadNetlist(lines);
-            else
-                parseResult = ParseProtel2Netlist(lines);
-
-            var compDict = parseResult.Components.ToDictionary(c => c.Designator, c => c);
-
-            WriteNetFile(parseResult.Nets, outFolder, baseName, compDict);
-            WriteBomFile(parseResult.Components, outFolder, baseName);
-            WriteDotFile(parseResult.Components, parseResult.Nets, outFolder, baseName);
-
-            _logger.LogInformation($"Обработан: {Path.GetFileName(filePath)} -> out/{baseName}_*.txt, *.dot");
-            Program.ShowNotification("Файл успешно обработан",
-                $"Конвертация файла {Path.GetFileName(filePath)} завершена.", ToolTipIcon.Info);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, $"Ошибка при обработке {filePath}");
-            Program.ShowNotification("Ошибка конвертации", ex.Message, ToolTipIcon.Error);
-        }
-    }
-
-    // ========== Парсер Protel2 ==========
-    private ParseResult ParseProtel2Netlist(string[] lines)
-    {
-        var result = new ParseResult();
-        bool inNetSection = false, inComponentSection = false;
-        NetInfo? currentNet = null;
-        ComponentInfo? currentComponent = null;
-        string? expectedField = null;
-
-        foreach (var rawLine in lines)
-        {
-            string line = rawLine.Trim();
-            if (string.IsNullOrEmpty(line)) continue;
-
-            if (line == "[" && !inNetSection)
+            foreach (var subItem in block)
             {
-                inComponentSection = true;
-                currentComponent = new ComponentInfo();
-                expectedField = null;
-                continue;
-            }
-            if (line == "]" && inComponentSection)
-            {
-                inComponentSection = false;
-                if (currentComponent != null && !string.IsNullOrEmpty(currentComponent.Designator))
-                    result.Components.Add(currentComponent);
-                currentComponent = null;
-                continue;
-            }
-            if (line == "(")
-            {
-                inNetSection = true;
-                currentNet = new NetInfo();
-                continue;
-            }
-            if (line == ")")
-            {
-                inNetSection = false;
-                if (currentNet != null && !string.IsNullOrEmpty(currentNet.NetName) && currentNet.Pins.Count > 0)
-                    result.Nets.Add(currentNet);
-                currentNet = null;
-                continue;
-            }
-
-            if (inComponentSection)
-                ParseComponentLine(line, currentComponent!, ref expectedField);
-            else if (inNetSection)
-                ParseNetLine(line, currentNet!);
-        }
-        return result;
-    }
-
-    private void ParseComponentLine(string line, ComponentInfo component, ref string? expectedField)
-    {
-        if (expectedField != null)
-        {
-            switch (expectedField)
-            {
-                case "DESIGNATOR": component.Designator = line; break;
-                case "PARTTYPE": component.PartType = line; break;
-                case "Comment": component.Comment = line; break;
-            }
-            expectedField = null;
-            return;
-        }
-        if (line.Equals("DESIGNATOR", StringComparison.OrdinalIgnoreCase)) expectedField = "DESIGNATOR";
-        else if (line.Equals("PARTTYPE", StringComparison.OrdinalIgnoreCase)) expectedField = "PARTTYPE";
-        else if (line.Equals("Comment", StringComparison.OrdinalIgnoreCase)) expectedField = "Comment";
-    }
-
-    private void ParseNetLine(string line, NetInfo net)
-    {
-        if (string.IsNullOrEmpty(net.NetName))
-        {
-            net.NetName = line;
-            return;
-        }
-        var match = Regex.Match(line, @"^(?<pin>[A-Za-z0-9]+-\d+)");
-        if (match.Success)
-            net.Pins.Add(match.Groups["pin"].Value);
-    }
-
-    // ========== Парсер KiCad ==========
-    private ParseResult ParseKiCadNetlist(string[] lines)
-    {
-        var result = new ParseResult();
-        string fullText = string.Join(" ", lines).Replace("\r", " ").Replace("\n", " ");
-        var tokens = TokenizeSexpr(fullText);
-        int idx = 0;
-        var root = ParseSexpr(tokens, ref idx);
-
-        // Компоненты
-        var compsNode = FindChild(root, "components");
-        if (compsNode != null)
-        {
-            foreach (var compNode in FindAllChildren(compsNode, "comp"))
-            {
-                var comp = new ComponentInfo();
-                comp.Designator = CleanRef(GetStringChild(compNode, "ref") ?? "");
-                comp.PartType = RemoveQuotes(GetStringChild(compNode, "value") ?? "?");
-                string rawFp = GetStringChild(compNode, "footprint") ?? "";
-                if (!string.IsNullOrEmpty(rawFp) && rawFp.Contains(':'))
-                    rawFp = rawFp.Split(':').Last();
-                comp.Footprint = RemoveQuotes(rawFp);
-
-                var fieldsNode = FindChild(compNode, "fields");
-                if (fieldsNode != null)
+                if (IsTag(subItem, tag))
                 {
-                    foreach (var fieldNode in FindAllChildren(fieldsNode, "field"))
+                    var list = (List<object>)subItem;
+                    if (list.Count > 1 && list[1] is string val)
                     {
-                        var nameNode = FindChild(fieldNode, "name");
-                        if (nameNode != null && nameNode.Children.Count > 0 && nameNode.Children[0].StringValue == "Comment")
+                        return val;
+                    }
+                }
+            }
+            return "~";
+        }
+
+        public void ParseAndSimplify(string netlistPath)
+        {
+            // Инициализируем наш новый логгер рядом с целевым файлом
+            FileLogger.Initialize(netlistPath);
+            FileLogger.Log($"Начало обработки файла: {Path.GetFileName(netlistPath)}");
+
+            string content;
+
+            try
+            {
+                content = File.ReadAllText(netlistPath, Encoding.UTF8);
+                FileLogger.Log($"Файл успешно прочитан. Размер: {content.Length} символов.");
+            }
+            catch (Exception e)
+            {
+                FileLogger.Log($"КРИТИЧЕСКАЯ ОШИБКА ЧТЕНИЯ ФАЙЛА: {e.Message}");
+                return;
+            }
+
+            // Вызываем парсер S-выражений
+            List<object>? tree = SExpressionParser.Parse(content);
+            
+            if (tree == null)
+            {
+                FileLogger.Log("ОШИБКА: Парсер SExpressionParser.Parse вернул null!");
+                return;
+            }
+
+            FileLogger.Log($"Парсер вернул дерево. Количество элементов на верхнем уровне: {tree.Count}");
+            
+            if (tree.Count > 0)
+            {
+                FileLogger.Log($"Тип первого элемента дерева: {tree[0]?.GetType().Name}");
+                FileLogger.Log($"Значение первого элемента дерева: '{tree[0]}'");
+            }
+
+            // Проверяем корень на "export"
+            if (tree.Count == 0 || !(tree[0] is string rootTag) || rootTag != "export")
+            {
+                FileLogger.Log("ОШИБКА ФОРМАТА: Первый элемент дерева НЕ является строкой 'export'. Выход из парсера.");
+                return;
+            }
+
+            FileLogger.Log("Проверка корня 'export' ПРОЙДЕНА успешно. Начинаем обход блоков...");
+
+            var components = new Dictionary<string, ComponentInfo>();
+            var simplifiedNets = new SortedDictionary<string, Dictionary<string, SortedSet<string>>>();
+            bool hasWarnings = false;
+
+            // Обходим блоки внутри "export"
+            for (int i = 1; i < tree.Count; i++)
+            {
+                if (!(tree[i] is List<object> block))
+                {
+                    FileLogger.Log($"Строка {i}: Элемент не является списком (пропускаем). Тип: {tree[i]?.GetType().Name}");
+                    continue;
+                }
+
+                if (block.Count == 0 || !(block[0] is string blockTag))
+                {
+                    FileLogger.Log($"Строка {i}: Список пустой или не начинается с текстового тега.");
+                    continue;
+                }
+
+                FileLogger.Log($"Строка {i}: Обнаружен блок '{blockTag}' с количеством подэлементов: {block.Count}");
+
+                // 1. Сбор данных для BOM
+                if (blockTag == "components")
+                {
+                    FileLogger.Log(" -> Заходим в разбор компонентов...");
+                    int compCount = 0;
+                    for (int j = 1; j < block.Count; j++)
+                    {
+                        if (block[j] is List<object> comp && comp.Count > 0 && comp[0] is string compTag && compTag == "comp")
                         {
-                            comp.Comment = GetStringValue(fieldNode) ?? "";
-                            break;
+                            compCount++;
+                            string refName = GetValueForTag(comp, "ref");
+                            string value = GetValueForTag(comp, "value");
+                            string footprint = GetValueForTag(comp, "footprint");
+
+                            if (footprint.Contains(":"))
+                            {
+                                footprint = footprint.Substring(footprint.LastIndexOf(':') + 1);
+                            }
+
+                            string baseRef = CleanRef(refName);
+                            if (!components.ContainsKey(baseRef))
+                            {
+                                bool isMissing = string.IsNullOrWhiteSpace(footprint) || footprint == "~";
+                                if (isMissing) hasWarnings = true;
+
+                                components[baseRef] = new ComponentInfo
+                                {
+                                    Value = value,
+                                    Footprint = isMissing ? "!!! НЕТ ФУТПРИНТА !!!" : footprint,
+                                    IsMissingFp = isMissing
+                                };
+                            }
                         }
                     }
+                    FileLogger.Log($" -> Завершен разбор компонентов. Успешно обработано 'comp': {compCount}");
                 }
-                if (!string.IsNullOrEmpty(comp.Designator))
-                    result.Components.Add(comp);
-            }
-        }
-
-        // Цепи
-        var netsNode = FindChild(root, "nets");
-        if (netsNode != null)
-        {
-            foreach (var netNode in FindAllChildren(netsNode, "net"))
-            {
-                var net = new NetInfo();
-                string rawName = GetStringChild(netNode, "name") ?? "";
-                net.NetName = RemoveQuotes(rawName);
-                foreach (var node in FindAllChildren(netNode, "node"))
+                // 2. Сбор данных для Нетлиста
+                else if (blockTag == "nets")
                 {
-                    string refDes = CleanRef(RemoveQuotes(GetStringChild(node, "ref") ?? ""));
-                    string pin = RemoveQuotes(GetStringChild(node, "pin") ?? "");
-                    if (!string.IsNullOrEmpty(refDes) && !string.IsNullOrEmpty(pin))
-                        net.Pins.Add($"{refDes}-{pin}");
-                }
-
-                bool isUnconnected = string.IsNullOrWhiteSpace(net.NetName) ||
-                                     net.NetName.Contains("unconnected", StringComparison.OrdinalIgnoreCase) ||
-                                     net.NetName.Contains("no net", StringComparison.OrdinalIgnoreCase);
-
-                if (!isUnconnected && net.Pins.Count > 0)
-                {
-                    result.Nets.Add(net);
-                }
-            }
-        }
-        return result;
-    }
-
-    // ========== S-expression support ==========
-    private class SexprNode
-    {
-        public string Name { get; set; } = "";
-        public List<SexprNode> Children { get; } = new();
-        public string? StringValue { get; set; }
-    }
-
-    private List<string> TokenizeSexpr(string text)
-    {
-        var tokens = new List<string>();
-        var sb = new StringBuilder();
-        bool inString = false;
-        for (int i = 0; i < text.Length; i++)
-        {
-            char c = text[i];
-            if (c == '"')
-            {
-                if (inString && i > 0 && text[i - 1] == '\\') sb.Append(c);
-                else
-                {
-                    if (inString)
+                    FileLogger.Log(" -> Заходим в разбор цепей (nets)...");
+                    int netCount = 0;
+                    for (int j = 1; j < block.Count; j++)
                     {
-                        tokens.Add(sb.ToString());
-                        sb.Clear();
+                        if (block[j] is List<object> net && net.Count > 0 && net[0] is string netTag && netTag == "net")
+                        {
+                            netCount++;
+                            string netName = GetValueForTag(net, "name");
+
+                            if (string.IsNullOrWhiteSpace(netName) || netName.ToLower().Contains("unconnected"))
+                            {
+                                continue;
+                            }
+
+                            if (!simplifiedNets.ContainsKey(netName))
+                            {
+                                simplifiedNets[netName] = new Dictionary<string, SortedSet<string>>();
+                            }
+
+                            foreach (var item in net)
+                            {
+                                if (item is List<object> node && node.Count > 0 && node[0] is string nodeTag && nodeTag == "node")
+                                {
+                                    string nRef = GetValueForTag(node, "ref");
+                                    string nPin = GetValueForTag(node, "pin");
+                                    string baseRef = CleanRef(nRef);
+
+                                    if (!simplifiedNets[netName].ContainsKey(baseRef))
+                                    {
+                                        simplifiedNets[netName][baseRef] = new SortedSet<string>(new PinComparer());
+                                    }
+                                    simplifiedNets[netName][baseRef].Add(nPin);
+                                }
+                            }
+                        }
                     }
-                    inString = !inString;
-                    if (!inString) continue;
+                    FileLogger.Log($" -> Завершен разбор цепей. Успешно обработано 'net': {netCount}");
                 }
             }
-            if (inString)
-            {
-                sb.Append(c);
-                continue;
-            }
-            if (c == '(' || c == ')')
-            {
-                if (sb.Length > 0) { tokens.Add(sb.ToString()); sb.Clear(); }
-                tokens.Add(c.ToString());
-            }
-            else if (char.IsWhiteSpace(c))
-            {
-                if (sb.Length > 0) { tokens.Add(sb.ToString()); sb.Clear(); }
-            }
-            else sb.Append(c);
-        }
-        if (sb.Length > 0) tokens.Add(sb.ToString());
-        return tokens;
-    }
 
-    private SexprNode ParseSexpr(List<string> tokens, ref int idx)
-    {
-        var node = new SexprNode();
-        if (tokens[idx] == "(")
+            FileLogger.Log($"Сбор данных завершен. Найдено уникальных компонентов: {components.Count}, цепей: {simplifiedNets.Count}");
+            FileLogger.Log("Переходим к вызову метода WriteOutputFiles...");
+
+            // Выгружаем результаты в файлы (этот метод у вас остается без изменений)
+            WriteOutputFiles(netlistPath, components, simplifiedNets, hasWarnings);
+            
+            FileLogger.Log("=== КОНЕЦ ОТЛАДКИ: Все файлы успешно сгенерированы! ===");
+        }
+
+
+        private void WriteOutputFiles(string netlistPath, Dictionary<string, ComponentInfo> components, 
+            SortedDictionary<string, Dictionary<string, SortedSet<string>>> simplifiedNets, bool hasWarnings)
         {
-            idx++;
-            if (idx < tokens.Count && tokens[idx] != "(" && tokens[idx] != ")")
+            string outDir = Path.Combine(Path.GetDirectoryName(netlistPath), "out");
+            Directory.CreateDirectory(outDir);
+            string baseName = Path.GetFileNameWithoutExtension(netlistPath);
+
+            // Запись упрощенного нетлиста
+            string netOutPath = Path.Combine(outDir, $"{baseName}_net.txt");
+            using (var writer = new StreamWriter(netOutPath, false, Encoding.UTF8))
             {
-                node.Name = tokens[idx];
-                idx++;
-            }
-            while (idx < tokens.Count && tokens[idx] != ")")
-            {
-                if (tokens[idx] == "(")
-                    node.Children.Add(ParseSexpr(tokens, ref idx));
-                else
+                writer.WriteLine($"=== Упрощенный нетлист для {Path.GetFileName(netlistPath)} ===");
+                writer.WriteLine("(Изолированные и unconnected цепи отфильтрованы)\n");
+
+                foreach (var netKvp in simplifiedNets)
                 {
-                    var child = new SexprNode { StringValue = tokens[idx] };
-                    node.Children.Add(child);
-                    idx++;
+                    writer.WriteLine($"Сеть: {netKvp.Key}");
+                    foreach (var compKvp in netKvp.Value)
+                    {
+                        string pinsStr = string.Join(", ", compKvp.Value);
+                        components.TryGetValue(compKvp.Key, out var compInfo);
+                        string valStr = compInfo != null ? compInfo.Value : "?";
+                        string alertStr = (compInfo != null && compInfo.IsMissingFp) ? " [⚠️ ВНИМАНИЕ: НЕТ КОРПУСА]" : "";
+
+                        writer.WriteLine($"  └─ {compKvp.Key} ({valStr}){alertStr} -> пины: {pinsStr}");
+                    }
+                    writer.WriteLine();
                 }
             }
-            if (idx < tokens.Count && tokens[idx] == ")") idx++;
-        }
-        else
-        {
-            node.StringValue = tokens[idx];
-            idx++;
-        }
-        return node;
-    }
 
-    private SexprNode? FindChild(SexprNode node, string name) =>
-        node.Children.FirstOrDefault(c => c.Name == name);
-
-    private IEnumerable<SexprNode> FindAllChildren(SexprNode node, string name) =>
-        node.Children.Where(c => c.Name == name);
-
-    private string? GetStringChild(SexprNode node, string childName)
-    {
-        var child = FindChild(node, childName);
-        if (child != null)
-            return GetStringValue(child);
-        return null;
-    }
-
-    private string? GetStringValue(SexprNode node)
-    {
-        string? raw = null;
-        if (node.StringValue != null)
-            raw = node.StringValue;
-        else if (node.Children.Count > 0 && node.Children[0].StringValue != null)
-            raw = node.Children[0].StringValue;
-        return raw;
-    }
-
-    // ========== Cleanup helpers ==========
-    private string RemoveQuotes(string text) =>
-        string.IsNullOrEmpty(text) ? text : text.Replace("\"", "");
-
-    private string CleanRef(string refDes)
-    {
-        if (string.IsNullOrEmpty(refDes)) return refDes;
-        var match = Regex.Match(refDes, @"^([A-Z]+\d+)[A-Z]?$");
-        return match.Success ? match.Groups[1].Value : refDes;
-    }
-
-    // ========== Write output files ==========
-
-    private void WriteNetFile(List<NetInfo> nets, string folder, string baseName, Dictionary<string, ComponentInfo> compDict)
-    {
-        var sb = new StringBuilder();
-        sb.AppendLine($"=== Упрощенный нетлист для {baseName}.net ===");
-        sb.AppendLine("(Изолированные и unconnected цепи отфильтрованы)");
-        sb.AppendLine();
-
-        foreach (var net in nets.OrderBy(n => n.NetName, StringComparer.OrdinalIgnoreCase))
-        {
-            string netName = RemoveQuotes(net.NetName);
-
-            var compGroups = net.Pins
-                .Select(pin => pin.Split('-'))
-                .Where(parts => parts.Length == 2)
-                .GroupBy(parts => CleanRef(parts[0]), parts => RemoveQuotes(parts[1]))
-                .ToDictionary(g => g.Key, g => g.Distinct().ToList());
-
-            if (compGroups.Count <= 1) continue;
-
-            sb.AppendLine($"Сеть: {netName}");
-            foreach (var kv in compGroups.OrderBy(k => k.Key, new DesignatorComparer()))
+            // Запись BOM
+            string bomOutPath = Path.Combine(outDir, $"{baseName}_bom.txt");
+            using (var writer = new StreamWriter(bomOutPath, false, Encoding.UTF8))
             {
-                string refDes = RemoveQuotes(kv.Key);
-                var pins = kv.Value
-                    .OrderBy(p => int.TryParse(p, out int n) ? n : 0)
-                    .ToList();
-                string pinsStr = string.Join(", ", pins);
+                writer.WriteLine($"=== BOM (Список компонентов) для {Path.GetFileName(netlistPath)} ===\n");
 
-                compDict.TryGetValue(refDes, out var comp);
-                string value = RemoveQuotes(comp?.PartType ?? "?");
-                bool missingFp = comp == null || string.IsNullOrEmpty(comp.Footprint) || comp.Footprint == "~";
-                string alert = missingFp ? " [⚠️ ВНИМАНИЕ: НЕТ КОРПУСА]" : "";
-                sb.AppendLine($"  └─ {refDes} ({value}){alert} -> пины: {pinsStr}");
+                if (hasWarnings)
+                {
+                    writer.WriteLine("⚠️⚠️⚠️ ВНИМАНИЕ! НАЙДЕНЫ КОМПОНЕНТЫ БЕЗ ПОСАДОЧНЫХ МЕСТ (FOOTPRINT): ⚠️⚠️⚠️");
+                    foreach (var kvp in components)
+                    {
+                        if (kvp.Value.IsMissingFp) writer.WriteLine($"  - {kvp.Key} (Номинал: {kvp.Value.Value})");
+                    }
+                    writer.WriteLine($"\n{new string('-', 73)}\n");
+                }
+
+                writer.WriteLine($"{"Компонент",-12} | {"Номинал",-25} | {"Корпус (Footprint)",-30}");
+                writer.WriteLine(new string('-', 73));
+
+                var sortedComponents = new List<string>(components.Keys);
+                // Используем наш вынесенный RefComparer
+                sortedComponents.Sort(new RefComparer());
+
+                foreach (var baseRef in sortedComponents)
+                {
+                    var info = components[baseRef];
+                    writer.WriteLine($"{baseRef,-12} | {info.Value,-25} | {info.Footprint,-30}");
+                }
             }
-            sb.AppendLine();
+
+            Console.WriteLine($" Успешно созданы файлы в out/:\n   - {Path.GetFileName(netOutPath)}\n   - {Path.GetFileName(bomOutPath)}\n");
         }
-
-        File.WriteAllText(Path.Combine(folder, baseName + "_net.txt"), sb.ToString(), Encoding.UTF8);
-    }
-
-    private void WriteBomFile(List<ComponentInfo> components, string folder, string baseName)
-    {
-        var sb = new StringBuilder();
-        sb.AppendLine($"=== BOM (Список компонентов) для {baseName}.net ===");
-        sb.AppendLine();
-
-        var sorted = components
-            .Where(c => !string.IsNullOrEmpty(c.Designator))
-            .OrderBy(c => c.Designator, new DesignatorComparer())
-            .ToList();
-
-        var missing = sorted.Where(c => string.IsNullOrEmpty(c.Footprint) || c.Footprint == "~").ToList();
-        if (missing.Any())
-        {
-            sb.AppendLine("⚠️⚠️⚠️ ВНИМАНИЕ! НАЙДЕНЫ КОМПОНЕНТЫ БЕЗ ПОСАДОЧНЫХ МЕСТ (FOOTPRINT): ⚠️⚠️⚠️");
-            foreach (var c in missing)
-                sb.AppendLine($"  - {RemoveQuotes(c.Designator)} (Номинал: {RemoveQuotes(c.PartType)})");
-            sb.AppendLine();
-            sb.AppendLine(new string('=', 73));
-            sb.AppendLine();
-        }
-
-        sb.AppendLine($"{"Компонент",-12} | {"Номинал",-25} | {"Корпус (Footprint)",-30}");
-        sb.AppendLine(new string('-', 73));
-
-        foreach (var comp in sorted)
-        {
-            string des = RemoveQuotes(comp.Designator);
-            string value = RemoveQuotes(comp.PartType);
-            string fp = string.IsNullOrEmpty(comp.Footprint) || comp.Footprint == "~" ? "!!! НЕТ ФУТПРИНТА !!!" : RemoveQuotes(comp.Footprint);
-            sb.AppendLine($"{des,-12} | {value,-25} | {fp,-30}");
-        }
-
-        File.WriteAllText(Path.Combine(folder, baseName + "_bom.txt"), sb.ToString(), Encoding.UTF8);
-    }
-
-    private void WriteDotFile(List<ComponentInfo> components, List<NetInfo> nets, string folder, string baseName)
-    {
-        var sb = new StringBuilder();
-        sb.AppendLine("graph Netlist {");
-        sb.AppendLine("    rankdir=LR;");
-        sb.AppendLine("    node [shape=box, style=filled, fillcolor=lightyellow];");
-        foreach (var comp in components)
-        {
-            string des = RemoveQuotes(comp.Designator);
-            string val = RemoveQuotes(comp.PartType);
-            sb.AppendLine($"    \"{des}\" [label=\"{des}\\n({val})\"];");
-        }
-
-        sb.AppendLine();
-        sb.AppendLine("    node [shape=ellipse, style=filled, fillcolor=lightblue];");
-        foreach (var net in nets)
-        {
-            string netName = RemoveQuotes(net.NetName);
-            string netNodeId = $"net_{netName}";
-            sb.AppendLine($"    \"{netNodeId}\" [label=\"{netName}\"];");
-
-            var compPins = new Dictionary<string, List<string>>();
-            foreach (var pin in net.Pins)
-            {
-                int dash = pin.LastIndexOf('-');
-                if (dash <= 0) continue;
-                string des = CleanRef(pin.Substring(0, dash));
-                string num = RemoveQuotes(pin.Substring(dash + 1));
-                if (!compPins.ContainsKey(des)) compPins[des] = new List<string>();
-                compPins[des].Add(num);
-            }
-            foreach (var kv in compPins)
-            {
-                string label = kv.Value.Count > 1 ? $" [label=\"{string.Join(",", kv.Value)}\"]" : "";
-                sb.AppendLine($"    \"{kv.Key}\" -- \"{netNodeId}\"{label};");
-            }
-        }
-        sb.AppendLine("}");
-        File.WriteAllText(Path.Combine(folder, baseName + "_net.dot"), sb.ToString(), Encoding.UTF8);
-    }
-
-    // ========== Comparer for natural sort ==========
-    private class DesignatorComparer : IComparer<string>
-    {
-        public int Compare(string? x, string? y)
-        {
-            if (x == null && y == null) return 0;
-            if (x == null) return -1;
-            if (y == null) return 1;
-
-            var xMatch = Regex.Match(x, @"^([A-Za-z]+)(\d+)?");
-            var yMatch = Regex.Match(y, @"^([A-Za-z]+)(\d+)?");
-            if (!xMatch.Success || !yMatch.Success)
-                return string.Compare(x, y, StringComparison.Ordinal);
-
-            int cmp = string.Compare(xMatch.Groups[1].Value, yMatch.Groups[1].Value, StringComparison.Ordinal);
-            if (cmp != 0) return cmp;
-
-            int xNum = xMatch.Groups[2].Success ? int.Parse(xMatch.Groups[2].Value) : 0;
-            int yNum = yMatch.Groups[2].Success ? int.Parse(yMatch.Groups[2].Value) : 0;
-            return xNum.CompareTo(yNum);
-        }
-    }
-
-    // ========== Internal data classes ==========
-    private class ParseResult
-    {
-        public List<ComponentInfo> Components { get; } = new();
-        public List<NetInfo> Nets { get; } = new();
-    }
-
-    private class ComponentInfo
-    {
-        public string Designator { get; set; } = "";
-        public string PartType { get; set; } = "?";
-        public string Comment { get; set; } = "";
-        public string Footprint { get; set; } = "";
-    }
-
-    private class NetInfo
-    {
-        public string NetName { get; set; } = "";
-        public List<string> Pins { get; } = new();
-    }
-
-    public override void Dispose()
-    {
-        foreach (var (w, _) in _watchers) w.Dispose();
-        base.Dispose();
     }
 }

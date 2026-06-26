@@ -9,6 +9,7 @@ using Microsoft.Extensions.Logging.Console;
 using Microsoft.Extensions.Logging;
 using System.IO;
 using System.Text.Json;
+using NetFileConverter;
 
 namespace FolderWatcher
 {
@@ -70,6 +71,19 @@ namespace FolderWatcher
         static void Main(string[] args)
         {
             ApplicationConfiguration.Initialize();
+
+            // try
+            // {
+            //     System.IO.File.WriteAllText(
+            //         "D:\\Projects\\DotNet\\NetFileConverter\\kicad_debug_log.txt", 
+            //         $"=== ХОЛОДНЫЙ СТАРТ ПРИЛОЖЕНИЯ: {DateTime.Now:yyyy-MM-dd HH:mm:ss} ===\r\n"
+            //     );
+            // }
+            // catch (Exception ex)
+            // {
+            //     // Если даже тут упадет, Windows выплюнет ошибку в консоль dotnet run
+            //     Console.WriteLine($"КРИТИЧЕСКАЯ ОШИБКА СТАРТА ЛОГА: {ex.Message}");
+            // }            
 
             // Гарантируем, что конфигурационный файл существует и доступен для записи
             EnsureConfigExists();
