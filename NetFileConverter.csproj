@@ -30,4 +30,11 @@
   
   <!-- Обход ошибки MSB4057 -->
   <Target Name="CreateManifestResourceNames" />
+
+  <ItemGroup>
+    <!-- Полностью исключаем файлы из компиляции и ресурсов -->
+    <Compile Remove="old\**" />
+    <EmbeddedResource Remove="old\**" />
+    <None Include="old\**" />
+  </ItemGroup>
 </Project>

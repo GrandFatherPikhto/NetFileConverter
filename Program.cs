@@ -11,6 +11,28 @@ using System.Text.Json;
 using NetFileConverter;
 using System.Reflection;
 
+using NetFileConverter.Core.Interfaces;
+using NetFileConverter.Core.Serialization;
+using NetFileConverter.Infrastructure.Generators;
+using NetFileConverter.Infrastructure.Parsers;
+
+// ... внутри ConfigureServices:
+
+services.AddHostedService<Worker>();
+
+// Регистрируем парсеры
+services.AddSingleton<INetlistParser, KiCadParser>();
+services.AddSingleton<INetlistParser, Protel2Parser>();
+
+// Регистрируем генераторы
+services.AddSingleton<IOutputGenerator, NetlistGenerator>();
+services.AddSingleton<IOutputGenerator, BomGenerator>();
+services.AddSingleton<IOutputGenerator, DotGenerator>();
+services.AddSingleton<IOutputGenerator, MermaidGenerator>();
+
+// Регистрируем сериализатор
+services.AddSingleton<INetlistSerializer, JsonNetlistSerializer>();
+
 namespace FolderWatcher
 {
     internal static class Program

@@ -1,91 +1,67 @@
 using System.Collections.Concurrent;
+using System.Text;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using NetFileConverter.Core.Interfaces;
 using NetFileConverter.Core.Models;
-using NetFileConverter.Infrastructure.Parsers;
-using NetFileConverter.Infrastructure.Generators;
+using NetFileConverter.Core.Serialization;
 
 namespace NetFileConverter;
 
 public class Worker : BackgroundService
 {
     private readonly IConfiguration _configuration;
-    private readonly INetlistParser _parser;
+    private readonly ILogger<Worker> _logger;
+    private readonly IEnumerable<INetlistParser> _parsers;
     private readonly IEnumerable<IOutputGenerator> _generators;
+    private readonly INetlistSerializer _serializer;
+    private readonly ConcurrentDictionary<string, DateTime> _lastProcessed = new();
+    private readonly ConcurrentQueue<string> _queue = new();
+    private readonly Timer _timer;
     private readonly List<FileSystemWatcher> _watchers = new();
-    private readonly ConcurrentDictionary<string, DateTime> _pendingFiles = new();
-    private readonly SemaphoreSlim _processingSemaphore = new(1, 1);
-    private readonly TimeSpan _debounceDelay = TimeSpan.FromMilliseconds(500);
-    private CancellationToken _stoppingToken;
+    private bool _isProcessing;
 
-    public Worker(IConfiguration configuration, INetlistParser parser, IEnumerable<IOutputGenerator> generators)
+    public Worker(
+        IConfiguration configuration,
+        ILogger<Worker> logger,
+        IEnumerable<INetlistParser> parsers,
+        IEnumerable<IOutputGenerator> generators,
+        INetlistSerializer serializer)
     {
         _configuration = configuration;
-        _parser = parser;
+        _logger = logger;
+        _parsers = parsers;
         _generators = generators;
+        _serializer = serializer;
+        _timer = new Timer(ProcessQueue, null, Timeout.Infinite, Timeout.Infinite);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        _stoppingToken = stoppingToken;
-        FileLogger.Log("Worker инициализирован с новой архитектурой.");
+        _logger.LogInformation("Worker запущен");
 
+        // Загружаем настройки
         var entries = LoadDirectories();
-        FileLogger.Log($"Загружено {entries.Count} директорий из конфига.");
+        _logger.LogInformation("Загружено {Count} директорий", entries.Count);
 
         // Первоначальная обработка существующих файлов
-        await ProcessExistingFiles(entries);
-
-        // Запуск мониторинга
-        StartMonitoring(entries);
-
-        // Фоновая задача для обработки очереди файлов
-        _ = Task.Run(() => ProcessQueueAsync(stoppingToken), stoppingToken);
-
-        // Ожидаем сигнал остановки
-        await Task.Delay(Timeout.Infinite, stoppingToken);
-    }
-
-    private List<(string Path, string Format)> LoadDirectories()
-    {
-        var result = new List<(string, string)>();
-        var section = _configuration.GetSection("WatcherSettings:SourceDirectories");
-
-        foreach (var child in section.GetChildren())
-        {
-            string? path = child["Path"];
-            string? format = child["Format"];
-            if (!string.IsNullOrWhiteSpace(path))
-                result.Add((path.TrimEnd('\\', '/'), format ?? "KiCad"));
-        }
-
-        return result;
-    }
-
-    private async Task ProcessExistingFiles(List<(string Path, string Format)> entries)
-    {
         foreach (var (dir, format) in entries)
         {
             if (!Directory.Exists(dir))
             {
-                FileLogger.Log($"ПРЕДУПРЕЖДЕНИЕ: Папка не существует: {dir}");
+                _logger.LogWarning("Папка не существует: {Dir}", dir);
                 continue;
             }
 
-            var files = Directory.GetFiles(dir, "*.net")
-                .Concat(Directory.GetFiles(dir, "*.NET"))
-                .Distinct();
-
-            foreach (var file in files)
+            foreach (var file in Directory.GetFiles(dir, "*.net", SearchOption.TopDirectoryOnly))
             {
-                await ProcessFile(file);
+                _queue.Enqueue(file);
             }
         }
-    }
+        ProcessQueue(null);
 
-    private void StartMonitoring(List<(string Path, string Format)> entries)
-    {
+        // Запускаем мониторинг
         foreach (var (dir, format) in entries)
         {
             if (!Directory.Exists(dir)) continue;
@@ -99,116 +75,141 @@ public class Worker : BackgroundService
             watcher.Changed += OnFileChanged;
             watcher.Created += OnFileChanged;
             _watchers.Add(watcher);
-
-            FileLogger.Log($"Мониторинг запущен для: {dir} (формат: {format})");
+            _logger.LogInformation("Начат мониторинг папки: {Dir} (формат: {Format})", dir, format);
         }
-    }
 
-    private void OnFileChanged(object sender, FileSystemEventArgs e)
-    {
-        // Дедупликация: добавляем файл в очередь с задержкой
-        _pendingFiles.AddOrUpdate(e.FullPath, DateTime.UtcNow, (_, _) => DateTime.UtcNow);
-    }
-
-    private async Task ProcessQueueAsync(CancellationToken cancellationToken)
-    {
-        while (!cancellationToken.IsCancellationRequested)
+        // Ждём остановки
+        while (!stoppingToken.IsCancellationRequested)
         {
-            await Task.Delay(_debounceDelay, cancellationToken);
-
-            var now = DateTime.UtcNow;
-            var readyFiles = _pendingFiles
-                .Where(kvp => (now - kvp.Value) > _debounceDelay)
-                .Select(kvp => kvp.Key)
-                .ToList();
-
-            foreach (var filePath in readyFiles)
-            {
-                if (_pendingFiles.TryRemove(filePath, out _))
-                {
-                    try
-                    {
-                        await ProcessFile(filePath);
-                    }
-                    catch (Exception ex)
-                    {
-                        FileLogger.Log($"Ошибка обработки файла {filePath}: {ex.Message}");
-                    }
-                }
-            }
+            await Task.Delay(1000, stoppingToken);
         }
-    }
 
-    private async Task ProcessFile(string filePath)
-    {
-        // Ожидаем освобождения файла (если он ещё пишется)
-        await WaitForFileReady(filePath);
-
-        await _processingSemaphore.WaitAsync(_stoppingToken);
-        try
-        {
-            FileLogger.Log($"Обработка: {Path.GetFileName(filePath)}");
-
-            // Парсим
-            var document = _parser.Parse(filePath);
-
-            // Сохраняем JSON-версию (опционально)
-            string outDir = Path.Combine(Path.GetDirectoryName(filePath)!, "out");
-            Directory.CreateDirectory(outDir);
-            string jsonPath = Path.Combine(outDir, $"{Path.GetFileNameWithoutExtension(filePath)}.json");
-            var serializer = new JsonNetlistSerializer();
-            serializer.SerializeToFile(document, jsonPath);
-
-            // Генерируем выходные файлы
-            foreach (var generator in _generators)
-            {
-                generator.Generate(document, outDir);
-            }
-
-            FileLogger.Log($"Успешно обработан: {Path.GetFileName(filePath)}");
-        }
-        catch (Exception ex)
-        {
-            FileLogger.Log($"Ошибка обработки {filePath}: {ex.Message}");
-            throw;
-        }
-        finally
-        {
-            _processingSemaphore.Release();
-        }
-    }
-
-    private async Task WaitForFileReady(string filePath)
-    {
-        const int maxAttempts = 10;
-        const int delayMs = 200;
-
-        for (int attempt = 0; attempt < maxAttempts; attempt++)
-        {
-            try
-            {
-                using (var stream = File.Open(filePath, FileMode.Open, FileAccess.Read, FileShare.Read))
-                {
-                    return;
-                }
-            }
-            catch (IOException)
-            {
-                await Task.Delay(delayMs, _stoppingToken);
-            }
-        }
-        throw new TimeoutException($"Файл {filePath} не стал доступен после {maxAttempts * delayMs} мс.");
-    }
-
-    public override void Dispose()
-    {
+        // Остановка
         foreach (var watcher in _watchers)
         {
             watcher.EnableRaisingEvents = false;
             watcher.Dispose();
         }
         _watchers.Clear();
-        _processingSemaphore.Dispose();
-        base.Dispose();
+        _timer.Dispose();
+
+        _logger.LogInformation("Worker остановлен");
+    }
+
+    private void OnFileChanged(object sender, FileSystemEventArgs e)
+    {
+        // Дедупликация: не обрабатываем один файл чаще чем раз в 1.5 секунды
+        var now = DateTime.Now;
+        if (_lastProcessed.TryGetValue(e.FullPath, out var last) && (now - last).TotalSeconds < 1.5)
+            return;
+
+        _lastProcessed[e.FullPath] = now;
+        _queue.Enqueue(e.FullPath);
+        _timer.Change(200, Timeout.Infinite); // Задержка 200 мс перед обработкой
+    }
+
+    private void ProcessQueue(object? state)
+    {
+        if (_isProcessing) return;
+        _isProcessing = true;
+
+        try
+        {
+            while (_queue.TryDequeue(out var filePath))
+            {
+                try
+                {
+                    ProcessFile(filePath);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Ошибка обработки файла {File}", filePath);
+                }
+            }
+        }
+        finally
+        {
+            _isProcessing = false;
+        }
+    }
+
+    private void ProcessFile(string filePath)
+    {
+        _logger.LogInformation("Обработка файла: {File}", Path.GetFileName(filePath));
+
+        // Определяем формат
+        var format = DetectFormat(filePath);
+        if (format == null)
+        {
+            _logger.LogWarning("Неизвестный формат файла: {File}", filePath);
+            return;
+        }
+
+        // Выбираем парсер
+        var parser = _parsers.FirstOrDefault(p =>
+            (format == "KiCad" && p is Infrastructure.Parsers.KiCadParser) ||
+            (format == "Protel2" && p is Infrastructure.Parsers.Protel2Parser));
+
+        if (parser == null)
+        {
+            _logger.LogWarning("Парсер для формата {Format} не найден", format);
+            return;
+        }
+
+        // Парсим
+        var document = parser.Parse(filePath);
+        _logger.LogInformation("Парсинг завершён: {Components} компонентов, {Nets} цепей",
+            document.Components.Count, document.Nets.Count);
+
+        // Сохраняем JSON (опционально, для отладки)
+        var outDir = Path.Combine(Path.GetDirectoryName(filePath)!, "out");
+        var jsonPath = Path.Combine(outDir, $"{Path.GetFileNameWithoutExtension(filePath)}.json");
+        _serializer.SerializeToFile(document, jsonPath);
+
+        // Генерируем выходные файлы
+        foreach (var generator in _generators)
+        {
+            generator.Generate(document, outDir);
+        }
+
+        _logger.LogInformation("Файл {File} обработан успешно", Path.GetFileName(filePath));
+    }
+
+    private string? DetectFormat(string filePath)
+    {
+        try
+        {
+            using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            byte[] buf = new byte[64];
+            int n = fs.Read(buf, 0, buf.Length);
+            string header = Encoding.ASCII.GetString(buf, 0, n);
+
+            if (header.StartsWith("PROTEL NETLIST", StringComparison.OrdinalIgnoreCase))
+                return "Protel2";
+            if (header.TrimStart().StartsWith("(export", StringComparison.OrdinalIgnoreCase))
+                return "KiCad";
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Ошибка определения формата файла {File}", filePath);
+        }
+
+        return null;
+    }
+
+    private List<(string Dir, string Format)> LoadDirectories()
+    {
+        var result = new List<(string, string)>();
+        var section = _configuration.GetSection("WatcherSettings:SourceDirectories");
+
+        foreach (var child in section.GetChildren())
+        {
+            string? path = child["Path"];
+            string? format = child["Format"];
+            if (!string.IsNullOrWhiteSpace(path))
+                result.Add((path.TrimEnd('\\', '/'), format ?? "KiCad"));
+        }
+
+        return result;
     }
 }
