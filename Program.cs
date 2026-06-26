@@ -1,17 +1,17 @@
-using System;
 using System.Drawing;
+using System.Text.Json;
 using System.Windows.Forms;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
-using System.IO;
-using System.Text.Json;
+using Serilog;
 using NetFileConverter;
 using NetFileConverter.Core.Interfaces;
 using NetFileConverter.Core.Serialization;
 using NetFileConverter.Infrastructure.Generators;
 using NetFileConverter.Infrastructure.Parsers;
+using NetFileConverter.Infrastructure.Utils;
 
 namespace FolderWatcher
 {
@@ -79,64 +79,97 @@ namespace FolderWatcher
             string exeDir = Path.GetDirectoryName(exePath) ?? AppContext.BaseDirectory;
             Directory.SetCurrentDirectory(exeDir);
 
-            var builder = new HostBuilder()
-                .ConfigureAppConfiguration((context, config) =>
-                {
-                    // Исправлено предупреждение CS8604 проверкой на null через оператор ??
-                    config.SetBasePath(Path.GetDirectoryName(configPath) ?? AppContext.BaseDirectory);
-                    config.AddJsonFile(Path.GetFileName(configPath), optional: false, reloadOnChange: true);
+            // ─── НАСТРОЙКА ЛОГГЕРА (Serilog) ────────────────────────────────
+            string appDataPath = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                "NetFileConverter");
+            Directory.CreateDirectory(appDataPath);
+            string logFilePath = Path.Combine(appDataPath, "logs.txt");
 
-                    string localConfig = Path.Combine(exeDir, "appsettings.json");
-                    if (File.Exists(localConfig))
-                        config.AddJsonFile(localConfig, optional: true, reloadOnChange: false);
-                })
-                .ConfigureLogging(logging =>
-                {
-                    logging.SetMinimumLevel(LogLevel.Information);
-                    logging.AddConsole();
-                    logging.AddDebug();
-                })
-                .ConfigureServices((context, services) =>
-                {
-                    // Объединили все ваши регистрации в один чистый DI-контейнер
-                    services.AddSingleton<INetlistSerializer, JsonNetlistSerializer>();
+            Log.Logger = new LoggerConfiguration()
+                .MinimumLevel.Information()
+                .WriteTo.File(logFilePath, rollingInterval: RollingInterval.Day)
+                .WriteTo.Console()
+                .CreateLogger();
 
-                    // Регистрируем ОБА парсера (чтобы Worker мог выбирать нужный)
-                    services.AddSingleton<INetlistParser, KiCadParser>();
-                    services.AddSingleton<INetlistParser, Protel2Parser>();
-
-                    // Регистрируем все генераторы
-                    services.AddSingleton<IOutputGenerator, NetlistGenerator>();
-                    services.AddSingleton<IOutputGenerator, BomGenerator>();
-                    services.AddSingleton<IOutputGenerator, DotGenerator>();
-                    services.AddSingleton<IOutputGenerator, MermaidGenerator>();
-
-                    // Добавляем фоновую службу и форму настроек
-                    services.AddHostedService<Worker>();
-                    services.AddTransient<SettingsForm>();
-                });
-
-            _host = builder.Build();
-            _host.StartAsync().GetAwaiter().GetResult();
-
-            _trayIcon = new NotifyIcon
+            try
             {
-                Icon = Icon.ExtractAssociatedIcon(System.Environment.ProcessPath ?? AppContext.BaseDirectory),
-                Visible = true,
-                Text = "NetList Folder Watcher Service"
-            };
+                Log.Information("=== СТАРТ ПРИЛОЖЕНИЯ ===");
+                
+                var builder = new HostBuilder()
+                    .ConfigureAppConfiguration((context, config) =>
+                    {
+                        config.SetBasePath(Path.GetDirectoryName(configPath) ?? AppContext.BaseDirectory);
+                        config.AddJsonFile(Path.GetFileName(configPath), optional: false, reloadOnChange: true);
 
-            var contextMenu = new ContextMenuStrip();
-            contextMenu.Items.Add("Настройки", null, ShowSettings);
-            contextMenu.Items.Add("Выход", null, ExitApplication);
-            _trayIcon.ContextMenuStrip = contextMenu;
-            _trayIcon.DoubleClick += ShowSettings;
+                        string localConfig = Path.Combine(exeDir, "appsettings.json");
+                        if (File.Exists(localConfig))
+                            config.AddJsonFile(localConfig, optional: true, reloadOnChange: false);
+                    })
+                    .ConfigureLogging(logging =>
+                    {
+                        logging.ClearProviders();
+                        logging.AddSerilog();
+                    })
+                    .ConfigureServices((context, services) =>
+                    {
+                        // Сериализатор
+                        services.AddSingleton<INetlistSerializer, JsonNetlistSerializer>();
 
-            Application.Run();
+                        // Парсеры
+                        services.AddSingleton<INetlistParser, KiCadParser>();
+                        services.AddSingleton<INetlistParser, Protel2Parser>();
 
-            _host?.StopAsync().GetAwaiter().GetResult();
-            _host?.Dispose();
-            _trayIcon?.Dispose();
+                        // Генераторы
+                        services.AddSingleton<IOutputGenerator, NetlistGenerator>();
+                        services.AddSingleton<IOutputGenerator, BomGenerator>();
+                        services.AddSingleton<IOutputGenerator, DotGenerator>();
+                        services.AddSingleton<IOutputGenerator, MermaidGenerator>();
+
+                        // Graphviz рендерер
+                        services.AddSingleton<IGraphvizRenderer, GraphvizRenderer>();
+
+                        // Фоновый Worker и форма настроек
+                        services.AddHostedService<Worker>();
+                        services.AddTransient<SettingsForm>();
+                    });
+
+                _host = builder.Build();
+                _host.StartAsync().GetAwaiter().GetResult();
+
+                Log.Information("Хост запущен, создаём иконку в трее.");
+
+                // ─── ИКОНКА ТРЕЯ ──────────────────────────────────────────────
+                _trayIcon = new NotifyIcon
+                {
+                    Icon = Icon.ExtractAssociatedIcon(System.Environment.ProcessPath ?? AppContext.BaseDirectory),
+                    Visible = true,
+                    Text = "NetList Folder Watcher Service"
+                };
+
+                var contextMenu = new ContextMenuStrip();
+                contextMenu.Items.Add("Настройки", null, ShowSettings);
+                contextMenu.Items.Add("Выход", null, ExitApplication);
+                _trayIcon.ContextMenuStrip = contextMenu;
+                _trayIcon.DoubleClick += ShowSettings;
+
+                Application.Run();
+
+                Log.Information("Приложение завершает работу.");
+            }
+            catch (Exception ex)
+            {
+                Log.Fatal(ex, "Критическая ошибка при запуске приложения.");
+                MessageBox.Show($"Ошибка при запуске:\n{ex.Message}", "Критическая ошибка",
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+            finally
+            {
+                _host?.StopAsync().GetAwaiter().GetResult();
+                _host?.Dispose();
+                _trayIcon?.Dispose();
+                Log.CloseAndFlush();
+            }
         }
 
         public static void ShowNotification(string title, string text, ToolTipIcon iconType = ToolTipIcon.Info)
