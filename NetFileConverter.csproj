@@ -21,6 +21,13 @@
     </None>
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Исключаем файлы тестов из компиляции основного проекта -->
+    <Compile Remove="NetFileConverter.Core.Tests\**" />
+    <EmbeddedResource Remove="NetFileConverter.Core.Tests\**" />
+    <None Remove="NetFileConverter.Core.Tests\**" />
+  </ItemGroup>
+  
   <!-- Обход ошибки MSB4057 -->
   <Target Name="CreateManifestResourceNames" />
 </Project>

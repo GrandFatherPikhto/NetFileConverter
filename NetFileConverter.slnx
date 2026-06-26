@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="NetFileConverter.Core.Tests/NetFileConverter.Core.Tests.csproj" />
+  <Project Path="NetFileConverter.Core/NetFileConverter.Core.csproj" />
+</Solution>
