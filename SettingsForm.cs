@@ -84,7 +84,8 @@ namespace FolderWatcher.Service
         {
             var builder = new ConfigurationBuilder()
                 // .SetBasePath(Path.GetDirectoryName(_configPath))
-                .SetBasePath(Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location) ?? AppContext.BaseDirectory)
+                // .SetBasePath(Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location) ?? AppContext.BaseDirectory)
+                .SetBasePath(AppContext.BaseDirectory)
                 .AddJsonFile(Path.GetFileName(_configPath), optional: true, reloadOnChange: true);
             _configuration = builder.Build();
 
