@@ -1,111 +1,81 @@
+using System;
+using System.Collections.Generic;
+using System.Drawing;
+using System.IO;
+using System.Linq;
 using System.Text.Json;
+using System.Windows.Forms;
 using Microsoft.Extensions.Configuration;
 
-namespace FolderWatcher.Service
+namespace NetFileConverter
 {
+    /// <summary>
+    /// Форма настроек. UI-разметка находится в SettingsForm.Designer.cs.
+    /// Здесь — только логика.
+    /// </summary>
     public partial class SettingsForm : Form
     {
-        private readonly string _configPath;
-        private ListBox _listBox = null!;
-        private Button _addButton = null!;
-        private Button _removeButton = null!;
-        private Button _saveButton = null!;
-        private IConfigurationRoot _configuration = null!;
-
-        // Модель для элемента списка
-        private class SourceDirectory
+        // ── Модель строки ────────────────────────────────────────────────────
+        private sealed class WatchedEntry
         {
-            public string Path { get; set; } = "";
+            public string Path   { get; set; } = "";
             public string Format { get; set; } = "Protel2";
-            public override string ToString() => $"[{Format}] {Path}";
         }
 
-        private static string GetConfigPath()
-        {
-            string appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-            string appFolder = Path.Combine(appData, "NetFileConverter");
-            if (!Directory.Exists(appFolder))
-                Directory.CreateDirectory(appFolder);
-            return Path.Combine(appFolder, "appsettings.json");
-        }
+        // ── Поля ─────────────────────────────────────────────────────────────
+        private readonly string _configPath;
 
+        // ── Конструктор ──────────────────────────────────────────────────────
         public SettingsForm()
         {
-            InitializeComponent();
+            InitializeComponent();   // из Designer.cs
             _configPath = GetConfigPath();
+            SetupListView();
+        }
+
+        // ── Настройка ListView ───────────────────────────────────────────────
+        private void SetupListView()
+        {
+            listViewWatchedFolders.View = View.Details;
+            listViewWatchedFolders.FullRowSelect = true;
+            listViewWatchedFolders.GridLines = true;
+            listViewWatchedFolders.MultiSelect = false;
+            listViewWatchedFolders.Font = new Font("Consolas", 9f);
+
+            listViewWatchedFolders.Columns.Add("Формат", 70, HorizontalAlignment.Center);
+            listViewWatchedFolders.Columns.Add("Путь к папке", 360, HorizontalAlignment.Left);
+        }
+
+        // ── Загрузка формы ───────────────────────────────────────────────────
+        private void SettingsForm_Load(object sender, EventArgs e)
+        {
             LoadSettings();
         }
 
-        // Вспомогательный метод
-        private string NormalizePath(string path)
-        {
-            if (string.IsNullOrWhiteSpace(path))
-                return path;
-            path = path.TrimEnd('\\', '/');
-            try
-            {
-                return Path.GetFullPath(path);
-            }
-            catch
-            {
-                return path;
-            }
-        }    
-
-        private void InitializeComponent()
-        {
-            this.Text = "Настройки Folder Watcher";
-            this.Size = new Size(550, 400);
-            this.StartPosition = FormStartPosition.CenterScreen;
-
-            _listBox = new ListBox { Dock = DockStyle.Fill, Font = new Font("Consolas", 9) };
-
-            _addButton = new Button { Text = "Добавить папку", Dock = DockStyle.Bottom, Height = 30 };
-            _removeButton = new Button { Text = "Удалить", Dock = DockStyle.Bottom, Height = 30 };
-            _saveButton = new Button { Text = "Сохранить", Dock = DockStyle.Bottom, Height = 30 };
-
-            var panel = new Panel { Dock = DockStyle.Bottom, Height = 95 };
-            panel.Controls.Add(_addButton);
-            panel.Controls.Add(_removeButton);
-            panel.Controls.Add(_saveButton);
-            _addButton.Top = 0;
-            _removeButton.Top = 30;
-            _saveButton.Top = 60;
-
-            this.Controls.Add(_listBox);
-            this.Controls.Add(panel);
-
-            _addButton.Click += AddButton_Click;
-            _removeButton.Click += RemoveButton_Click;
-            _saveButton.Click += SaveButton_Click;
-        }
-
+        // ── Загрузка конфигурации ────────────────────────────────────────────
         private void LoadSettings()
         {
+            listViewWatchedFolders.Items.Clear();
+
+            if (!File.Exists(_configPath)) return;
+
             var builder = new ConfigurationBuilder()
-                .SetBasePath(Path.GetDirectoryName(_configPath))
-                .AddJsonFile(Path.GetFileName(_configPath), optional: true, reloadOnChange: true);
-            _configuration = builder.Build();
+                .SetBasePath(System.IO.Path.GetDirectoryName(_configPath)!)
+                .AddJsonFile(System.IO.Path.GetFileName(_configPath), optional: true);
+            var config = builder.Build();
 
-            var directories = new List<SourceDirectory>();
-            var section = _configuration.GetSection("WatcherSettings:SourceDirectories");
+            var section = config.GetSection("WatcherSettings:SourceDirectories");
+            var children = section.GetChildren().ToList();
 
-            // Новый формат: массив объектов
-            var children = section.GetChildren();
             if (children.Any())
             {
+                // Новый формат: массив объектов { Path, Format }
                 foreach (var child in children)
                 {
-                    string path = child["Path"];
-                    string format = child["Format"];
-                    if (!string.IsNullOrEmpty(path))
-                    {
-                        directories.Add(new SourceDirectory
-                        {
-                            Path = NormalizePath(path),
-                            Format = string.IsNullOrEmpty(format) ? "Protel2" : format
-                        });
-                    }
+                    string? path   = child["Path"];
+                    string? format = child["Format"];
+                    if (!string.IsNullOrWhiteSpace(path))
+                        AddRow(new WatchedEntry { Path = NormalizePath(path), Format = format ?? "Protel2" });
                 }
             }
             else
@@ -113,130 +83,226 @@ namespace FolderWatcher.Service
                 // Старый формат: массив строк
                 var old = section.Get<string[]>();
                 if (old != null)
-                {
-                    foreach (var path in old)
-                        directories.Add(new SourceDirectory { Path = path, Format = "Protel2" });
-                }
+                    foreach (var p in old)
+                        AddRow(new WatchedEntry { Path = NormalizePath(p), Format = "Protel2" });
             }
 
-            _listBox.Items.Clear();
-            foreach (var dir in directories)
-                _listBox.Items.Add(dir);
+            AutoResizePathColumn();
         }
 
-        private void AddButton_Click(object? sender, EventArgs e)
+        // ── Вспомогательные методы ───────────────────────────────────────────
+        private void AddRow(WatchedEntry entry)
         {
-            using var dialog = new FolderBrowserDialog();
-            dialog.Description = "Выберите папку для отслеживания";
-            if (dialog.ShowDialog() == DialogResult.OK)
+            var item = new ListViewItem(entry.Format) { Tag = entry };
+            item.SubItems.Add(entry.Path);
+
+            // Цветовая маркировка форматов
+            item.ForeColor = entry.Format == "KiCad" ? Color.DarkBlue : Color.DarkGreen;
+
+            listViewWatchedFolders.Items.Add(item);
+        }
+
+        private void AutoResizePathColumn()
+        {
+            if (listViewWatchedFolders.Items.Count > 0)
+                listViewWatchedFolders.Columns[1].AutoResize(ColumnHeaderAutoResizeStyle.ColumnContent);
+        }
+
+        private static string NormalizePath(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path)) return path;
+            path = path.TrimEnd('\\', '/');
+            try   { return System.IO.Path.GetFullPath(path); }
+            catch { return path; }
+        }
+
+        private static string GetConfigPath()
+        {
+            string appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+            string folder  = System.IO.Path.Combine(appData, "NetFileConverter");
+            if (!Directory.Exists(folder)) Directory.CreateDirectory(folder);
+            return System.IO.Path.Combine(folder, "appsettings.json");
+        }
+
+        // ── Кнопка «Добавить» ────────────────────────────────────────────────
+        private void btnAddFolder_Click(object sender, EventArgs e)
+        {
+            using var dlg = new FolderBrowserDialog
             {
-                using var fmtForm = new Form()
-                {
-                    Text = "Выберите формат нетлиста",
-                    Width = 300,
-                    Height = 150,
-                    FormBorderStyle = FormBorderStyle.FixedDialog,
-                    StartPosition = FormStartPosition.CenterParent,
-                    MaximizeBox = false,
-                    MinimizeBox = false
-                };
-                var combo = new ComboBox
-                {
-                    DropDownStyle = ComboBoxStyle.DropDownList,
-                    Left = 20,
-                    Top = 20,
-                    Width = 240
-                };
-                combo.Items.AddRange(new[] { "Protel2", "KiCad" });
-                combo.SelectedIndex = 0;
+                Description  = "Выберите папку для отслеживания",
+                ShowNewFolderButton = false
+            };
+            if (dlg.ShowDialog(this) != DialogResult.OK) return;
 
-                var btnOk = new Button { Text = "OK", Left = 100, Top = 70, Width = 80, DialogResult = DialogResult.OK };
-                btnOk.Click += (_, _) => fmtForm.Close();
-                fmtForm.Controls.Add(combo);
-                fmtForm.Controls.Add(btnOk);
+            string norm = NormalizePath(dlg.SelectedPath);
 
-                if (fmtForm.ShowDialog() == DialogResult.OK)
-                {
-                    string normalizedPath = NormalizePath(dialog.SelectedPath);
-                    var newDir = new SourceDirectory
-                    {
-                        Path = normalizedPath,
-                        Format = combo.SelectedItem?.ToString() ?? "Protel2"
-                    };
+            // Проверяем дубликат
+            bool exists = listViewWatchedFolders.Items
+                .Cast<ListViewItem>()
+                .Any(it => ((WatchedEntry)it.Tag!).Path.Equals(norm, StringComparison.OrdinalIgnoreCase));
 
-                    bool exists = _listBox.Items.Cast<SourceDirectory>()
-                        .Any(d => d.Path.Equals(newDir.Path, StringComparison.OrdinalIgnoreCase));
-
-                    if (!exists)
-                        _listBox.Items.Add(newDir);
-                    else
-                        MessageBox.Show("Эта папка уже добавлена.", "Предупреждение", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                }
+            if (exists)
+            {
+                MessageBox.Show("Эта папка уже добавлена.", "Предупреждение",
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
             }
+
+            // Диалог выбора формата
+            string format = AskFormat(norm);
+            if (format == null!) return;  // пользователь закрыл окно
+
+            AddRow(new WatchedEntry { Path = norm, Format = format });
+            AutoResizePathColumn();
         }
 
-        private void RemoveButton_Click(object? sender, EventArgs e)
+        /// <summary>Небольшое всплывающее окошко выбора формата нетлиста.</summary>
+        private string AskFormat(string folderPath)
         {
-            if (_listBox.SelectedItem != null)
-                _listBox.Items.Remove(_listBox.SelectedItem);
+            using var dlg = new Form
+            {
+                Text = "Формат нетлиста",
+                Width = 360,
+                Height = 160,
+                FormBorderStyle = FormBorderStyle.FixedDialog,
+                StartPosition = FormStartPosition.CenterParent,
+                MaximizeBox = false,
+                MinimizeBox = false
+            };
+
+            var lbl = new Label
+            {
+                Text = $"Папка: {System.IO.Path.GetFileName(folderPath)}\nВыберите формат нетлиста:",
+                Left = 12, Top = 12, Width = 320, Height = 40,
+                Font = new Font("Segoe UI", 9f)
+            };
+
+            var combo = new ComboBox
+            {
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                Left = 12, Top = 60, Width = 200,
+                Font = new Font("Segoe UI", 10f)
+            };
+            combo.Items.AddRange(new object[] { "Protel2", "KiCad" });
+            combo.SelectedIndex = 0;
+
+            var btnOk = new Button
+            {
+                Text = "OK", DialogResult = DialogResult.OK,
+                Left = 225, Top = 58, Width = 100, Height = 28,
+                Font = new Font("Segoe UI", 9f)
+            };
+            dlg.AcceptButton = btnOk;
+
+            dlg.Controls.AddRange(new Control[] { lbl, combo, btnOk });
+
+            return dlg.ShowDialog(this) == DialogResult.OK
+                ? combo.SelectedItem!.ToString()!
+                : null!;
         }
 
-        private void SaveButton_Click(object? sender, EventArgs e)
+        // ── Кнопка «Удалить» ─────────────────────────────────────────────────
+        private void btnRemoveFolder_Click(object sender, EventArgs e)
+        {
+            if (listViewWatchedFolders.SelectedItems.Count == 0)
+            {
+                MessageBox.Show("Выберите строку для удаления.", "Подсказка",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            listViewWatchedFolders.Items.Remove(listViewWatchedFolders.SelectedItems[0]);
+        }
+
+        // ── Кнопка «Формат (K/P)» ────────────────────────────────────────────
+        private void btnToggleFormat_Click(object sender, EventArgs e)
+        {
+            if (listViewWatchedFolders.SelectedItems.Count == 0)
+            {
+                MessageBox.Show("Выберите строку для смены формата.", "Подсказка",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            var item  = listViewWatchedFolders.SelectedItems[0];
+            var entry = (WatchedEntry)item.Tag!;
+
+            entry.Format   = entry.Format == "KiCad" ? "Protel2" : "KiCad";
+            item.Text      = entry.Format;
+            item.ForeColor = entry.Format == "KiCad" ? Color.DarkBlue : Color.DarkGreen;
+        }
+
+        // ── Кнопка «Сохранить» ───────────────────────────────────────────────
+        private void btnSave_Click(object sender, EventArgs e)
         {
             try
             {
-                var directories = _listBox.Items.Cast<SourceDirectory>().ToList();
+                var entries = listViewWatchedFolders.Items
+                    .Cast<ListViewItem>()
+                    .Select(it => (WatchedEntry)it.Tag!)
+                    .ToList();
 
-                // Читаем существующий JSON, чтобы сохранить другие секции (Logging и т.д.)
-                string json = File.ReadAllText(_configPath);
+                // Читаем существующий JSON, сохраняем остальные секции (Logging и т.д.)
+                string json = File.Exists(_configPath)
+                    ? File.ReadAllText(_configPath)
+                    : "{}";
+
                 using var doc = JsonDocument.Parse(json);
-                var root = doc.RootElement;
+                using var mem = new MemoryStream();
+                using var w   = new Utf8JsonWriter(mem, new JsonWriterOptions { Indented = true });
 
-                using var stream = new MemoryStream();
-                using var writer = new Utf8JsonWriter(stream, new JsonWriterOptions { Indented = true });
+                w.WriteStartObject();
 
-                writer.WriteStartObject();
-                foreach (var property in root.EnumerateObject())
+                bool watcherWritten = false;
+                foreach (var prop in doc.RootElement.EnumerateObject())
                 {
-                    if (property.Name == "WatcherSettings")
+                    if (prop.Name == "WatcherSettings")
                     {
-                        writer.WriteStartObject("WatcherSettings");
-                        writer.WriteStartArray("SourceDirectories");
-                        foreach (var d in directories)
-                        {
-                            writer.WriteStartObject();
-                            writer.WriteString("Path", d.Path);
-                            writer.WriteString("Format", d.Format);
-                            writer.WriteEndObject();
-                        }
-                        writer.WriteEndArray();
-
-                        // Копируем остальные поля из WatcherSettings (если появятся)
-                        foreach (var innerProp in property.Value.EnumerateObject())
-                        {
-                            if (innerProp.Name != "SourceDirectories")
-                                innerProp.WriteTo(writer);
-                        }
-                        writer.WriteEndObject();
+                        WriteWatcherSection(w, entries);
+                        watcherWritten = true;
                     }
                     else
                     {
-                        property.WriteTo(writer);
+                        prop.WriteTo(w);
                     }
                 }
-                writer.WriteEndObject();
-                writer.Flush();
 
-                File.WriteAllBytes(_configPath, stream.ToArray());
+                // Если секции WatcherSettings ещё не было
+                if (!watcherWritten)
+                    WriteWatcherSection(w, entries);
 
-                MessageBox.Show("Настройки сохранены. Сервис автоматически применит их через несколько секунд.",
+                w.WriteEndObject();
+                w.Flush();
+
+                File.WriteAllBytes(_configPath, mem.ToArray());
+
+                MessageBox.Show(
+                    "Настройки сохранены.\nСлужба применит их автоматически через несколько секунд.",
                     "Успех", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                this.Close();
+                Close();
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Ошибка сохранения: {ex.Message}", "Ошибка", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MessageBox.Show($"Ошибка сохранения:\n{ex.Message}", "Ошибка",
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
+
+        private static void WriteWatcherSection(Utf8JsonWriter w, List<WatchedEntry> entries)
+        {
+            w.WriteStartObject("WatcherSettings");
+            w.WriteStartArray("SourceDirectories");
+            foreach (var e in entries)
+            {
+                w.WriteStartObject();
+                w.WriteString("Path",   e.Path);
+                w.WriteString("Format", e.Format);
+                w.WriteEndObject();
+            }
+            w.WriteEndArray();
+            w.WriteEndObject();
+        }
+
+        // ── Кнопка «Отмена» ──────────────────────────────────────────────────
+        private void btnCancel_Click(object sender, EventArgs e) => Close();
     }
 }

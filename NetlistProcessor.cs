@@ -8,6 +8,8 @@ namespace NetFileConverter
 {
     public class NetlistProcessor
     {
+        // ── Вспомогательные методы для KiCad ─────────────────────────────
+
         private string CleanRef(string refName)
         {
             var match = Regex.Match(refName, @"^([A-Z]+\d+)[A-Z]?$");
@@ -32,10 +34,69 @@ namespace NetFileConverter
             return "~";
         }
 
+        // ── Точка входа: определяем формат и диспетчеризируем ─────────────
+
+        /// <summary>
+        /// Определяет формат нетлиста по содержимому файла (не по расширению).
+        /// </summary>
+        private static NetlistFormat DetectFormat(string filePath)
+        {
+            try
+            {
+                // Читаем только первые 64 байта — достаточно для детекции
+                using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                byte[] buf = new byte[64];
+                int n = fs.Read(buf, 0, buf.Length);
+                string header = Encoding.ASCII.GetString(buf, 0, n);
+
+                if (header.StartsWith("PROTEL NETLIST", StringComparison.OrdinalIgnoreCase))
+                    return NetlistFormat.Protel2;
+
+                // KiCad нетлист начинается с "(export" или пробелов перед ним
+                if (header.TrimStart().StartsWith("(export", StringComparison.OrdinalIgnoreCase))
+                    return NetlistFormat.KiCad;
+            }
+            catch (Exception ex)
+            {
+                FileLogger.Log($"[Detect] Ошибка определения формата: {ex.Message}");
+            }
+
+            return NetlistFormat.Unknown;
+        }
+
         public void ParseAndSimplify(string netlistPath)
         {
             FileLogger.Log($"--- Старт обработки: {Path.GetFileName(netlistPath)} ---");
 
+            var format = DetectFormat(netlistPath);
+            FileLogger.Log($"[Detect] Формат: {format}");
+
+            switch (format)
+            {
+                case NetlistFormat.Protel2:
+                    ParseProtel(netlistPath);
+                    break;
+                case NetlistFormat.KiCad:
+                    ParseKiCad(netlistPath);
+                    break;
+                default:
+                    FileLogger.Log($"[Detect] Неизвестный формат файла: {Path.GetFileName(netlistPath)}. Пропуск.");
+                    break;
+            }
+        }
+
+        // ── Protel 2.0 ────────────────────────────────────────────────────
+
+        private void ParseProtel(string netlistPath)
+        {
+            var (components, nets, hasWarnings) = ProtelNetlistParser.Parse(netlistPath);
+            WriteOutputFiles(netlistPath, components, nets, hasWarnings);
+        }
+
+        // ── KiCad ─────────────────────────────────────────────────────────
+
+        private void ParseKiCad(string netlistPath)
+        {
             string content;
             try
             {
@@ -73,9 +134,7 @@ namespace NetFileConverter
                             string footprint = GetValueForTag(comp, "footprint");
 
                             if (footprint.Contains(":"))
-                            {
                                 footprint = footprint.Substring(footprint.LastIndexOf(':') + 1);
-                            }
 
                             string baseRef = CleanRef(refName);
                             if (!components.ContainsKey(baseRef))
@@ -101,15 +160,12 @@ namespace NetFileConverter
                         {
                             string netName = GetValueForTag(net, "name");
 
-                            if (string.IsNullOrWhiteSpace(netName) || netName.ToLower().Contains("unconnected"))
-                            {
+                            if (string.IsNullOrWhiteSpace(netName) ||
+                                netName.IndexOf("unconnected", StringComparison.OrdinalIgnoreCase) >= 0)
                                 continue;
-                            }
 
                             if (!simplifiedNets.ContainsKey(netName))
-                            {
                                 simplifiedNets[netName] = new Dictionary<string, SortedSet<string>>();
-                            }
 
                             foreach (var item in net)
                             {
@@ -120,9 +176,7 @@ namespace NetFileConverter
                                     string baseRef = CleanRef(nRef);
 
                                     if (!simplifiedNets[netName].ContainsKey(baseRef))
-                                    {
                                         simplifiedNets[netName][baseRef] = new SortedSet<string>(new PinComparer());
-                                    }
                                     simplifiedNets[netName][baseRef].Add(nPin);
                                 }
                             }
@@ -134,19 +188,24 @@ namespace NetFileConverter
             WriteOutputFiles(netlistPath, components, simplifiedNets, hasWarnings);
         }
 
-        private void WriteOutputFiles(string netlistPath, Dictionary<string, ComponentInfo> components, 
-            SortedDictionary<string, Dictionary<string, SortedSet<string>>> simplifiedNets, bool hasWarnings)
+        // ── Запись результатов (общая для обоих форматов) ─────────────────
+
+        private void WriteOutputFiles(
+            string netlistPath,
+            Dictionary<string, ComponentInfo> components,
+            SortedDictionary<string, Dictionary<string, SortedSet<string>>> simplifiedNets,
+            bool hasWarnings)
         {
             string? dirName = Path.GetDirectoryName(netlistPath);
             string outDir = Path.Combine(dirName ?? AppContext.BaseDirectory, "out");
             Directory.CreateDirectory(outDir);
             string baseName = Path.GetFileNameWithoutExtension(netlistPath);
 
-            // Запись нетлиста
+            // Нетлист
             string netOutPath = Path.Combine(outDir, $"{baseName}_net.txt");
             using (var writer = new StreamWriter(netOutPath, false, Encoding.UTF8))
             {
-                writer.WriteLine($"=== Упрощенный нетлист для {Path.GetFileName(netlistPath)} ===");
+                writer.WriteLine($"=== Упрощённый нетлист для {Path.GetFileName(netlistPath)} ===");
                 writer.WriteLine("(Изолированные и unconnected цепи отфильтрованы)\n");
 
                 foreach (var netKvp in simplifiedNets)
@@ -158,14 +217,13 @@ namespace NetFileConverter
                         components.TryGetValue(compKvp.Key, out var compInfo);
                         string valStr = compInfo != null ? compInfo.Value : "?";
                         string alertStr = (compInfo != null && compInfo.IsMissingFp) ? " [⚠️ ВНИМАНИЕ: НЕТ КОРПУСА]" : "";
-
                         writer.WriteLine($"  └─ {compKvp.Key} ({valStr}){alertStr} -> пины: {pinsStr}");
                     }
                     writer.WriteLine();
                 }
             }
 
-            // Запись BOM
+            // BOM
             string bomOutPath = Path.Combine(outDir, $"{baseName}_bom.txt");
             using (var writer = new StreamWriter(bomOutPath, false, Encoding.UTF8))
             {
@@ -175,25 +233,32 @@ namespace NetFileConverter
                 {
                     writer.WriteLine("⚠️⚠️⚠️ ВНИМАНИЕ! НАЙДЕНЫ КОМПОНЕНТЫ БЕЗ ПОСАДОЧНЫХ МЕСТ (FOOTPRINT): ⚠️⚠️⚠️");
                     foreach (var kvp in components)
-                    {
-                        if (kvp.Value.IsMissingFp) writer.WriteLine($"  - {kvp.Key} (Номинал: {kvp.Value.Value})");
-                    }
+                        if (kvp.Value.IsMissingFp)
+                            writer.WriteLine($"  - {kvp.Key} (Номинал: {kvp.Value.Value})");
                     writer.WriteLine($"\n{new string('-', 73)}\n");
                 }
 
                 writer.WriteLine($"{"Компонент",-12} | {"Номинал",-25} | {"Корпус (Footprint)",-30}");
                 writer.WriteLine(new string('-', 73));
 
-                var sortedComponents = new List<string>(components.Keys);
-                sortedComponents.Sort(new RefComparer());
+                var sortedRefs = new List<string>(components.Keys);
+                sortedRefs.Sort(new RefComparer());
 
-                foreach (var baseRef in sortedComponents)
+                foreach (var baseRef in sortedRefs)
                 {
                     var info = components[baseRef];
                     writer.WriteLine($"{baseRef,-12} | {info.Value,-25} | {info.Footprint,-30}");
                 }
             }
-            FileLogger.Log($"Успешно сгенерированы отчеты в /out/ для {baseName}");
+
+            FileLogger.Log($"Успешно сгенерированы отчёты в /out/ для {baseName}");
         }
+    }
+
+    public enum NetlistFormat
+    {
+        Unknown,
+        KiCad,
+        Protel2
     }
 }
