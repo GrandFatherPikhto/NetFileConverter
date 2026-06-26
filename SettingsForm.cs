@@ -83,7 +83,8 @@ namespace FolderWatcher.Service
         private void LoadSettings()
         {
             var builder = new ConfigurationBuilder()
-                .SetBasePath(Path.GetDirectoryName(_configPath))
+                // .SetBasePath(Path.GetDirectoryName(_configPath))
+                .SetBasePath(Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location) ?? AppContext.BaseDirectory)
                 .AddJsonFile(Path.GetFileName(_configPath), optional: true, reloadOnChange: true);
             _configuration = builder.Build();
 
@@ -96,8 +97,10 @@ namespace FolderWatcher.Service
             {
                 foreach (var child in children)
                 {
-                    string path = child["Path"];
-                    string format = child["Format"];
+                    // string path = child["Path"];
+                    // string format = child["Format"];
+                    string path = child["Path"] ?? "";
+                    string format = child["Format"] ?? "KiCad";
                     if (!string.IsNullOrEmpty(path))
                     {
                         directories.Add(new SourceDirectory

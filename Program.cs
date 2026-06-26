@@ -98,7 +98,8 @@ namespace FolderWatcher
             var builder = new HostBuilder()
                 .ConfigureAppConfiguration((context, config) =>
                 {
-                    config.SetBasePath(Path.GetDirectoryName(configPath));
+                    // config.SetBasePath(Path.GetDirectoryName(configPath));
+                    config.SetBasePath(Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location) ?? AppContext.BaseDirectory);
                     config.AddJsonFile(Path.GetFileName(configPath), optional: false, reloadOnChange: true);
 
                     // Резервный конфиг из папки с exe (только для разработки)
