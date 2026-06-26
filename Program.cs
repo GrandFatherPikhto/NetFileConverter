@@ -72,19 +72,6 @@ namespace FolderWatcher
         {
             ApplicationConfiguration.Initialize();
 
-            // try
-            // {
-            //     System.IO.File.WriteAllText(
-            //         "D:\\Projects\\DotNet\\NetFileConverter\\kicad_debug_log.txt", 
-            //         $"=== ХОЛОДНЫЙ СТАРТ ПРИЛОЖЕНИЯ: {DateTime.Now:yyyy-MM-dd HH:mm:ss} ===\r\n"
-            //     );
-            // }
-            // catch (Exception ex)
-            // {
-            //     // Если даже тут упадет, Windows выплюнет ошибку в консоль dotnet run
-            //     Console.WriteLine($"КРИТИЧЕСКАЯ ОШИБКА СТАРТА ЛОГА: {ex.Message}");
-            // }            
-
             // Гарантируем, что конфигурационный файл существует и доступен для записи
             EnsureConfigExists();
             string configPath = GetConfigPath();
@@ -116,6 +103,16 @@ namespace FolderWatcher
                 })
                 .ConfigureServices((context, services) =>
                 {
+                    // Регистрируем парсер (по умолчанию KiCad, но можно сделать фабрику)
+                    services.AddScoped<INetlistParser, KiCadParser>(); // или Protel2Parser
+
+                    // Регистрируем все генераторы
+                    services.AddScoped<IOutputGenerator, NetlistGenerator>();
+                    services.AddScoped<IOutputGenerator, BomGenerator>();
+                    services.AddScoped<IOutputGenerator, DotGenerator>();
+                    services.AddScoped<IOutputGenerator, MermaidGenerator>();
+
+                    // Регистрируем Worker
                     services.AddHostedService<Worker>();
                     services.AddTransient<SettingsForm>();
                 });

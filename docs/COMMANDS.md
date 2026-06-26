@@ -54,66 +54,17 @@ dotnet sln add NetFileConverter.Core.Tests/NetFileConverter.Core.Tests.csproj
 
 ## Создание новых подпроектов
 
-### Core
+### Пример
 
-Отлично! Давайте начнём с самого фундамента, чтобы всё последующее строилось на прочной основе. Я предлагаю стартовать с **Этапа 9 (введение промежуточного представления)** и **Этапа 1 (разделение ответственности)** одновременно — это логично, потому что модель данных и интерфейсы — это база, на которой будет держаться весь рефакторинг.
-
-Вот пошаговый план действий на сегодня:
-
----
-
-## 🚀 Первый шаг: Создание модели данных и базовых интерфейсов
-
-### 1. Создайте новую ветку
-```bash
-git checkout -b refactoring/step1-model-and-interfaces
-```
-
-### 2. Создайте проект Core
-В корне решения добавьте новый проект Class Library:
-```bash
-dotnet new classlib -n NetFileConverter.Core -f net8.0
-```
-Удалите автоматически созданный `Class1.cs`.
-
-### 3. Напишите классы модели
-В папке `Models` создайте файлы:
-- `NetlistDocument.cs`
-- `Component.cs`
-- `Net.cs`
-- `PinConnection.cs`
-
-Примерная структура (я уже набросал её выше, но если хотите, могу выдать полный код).
-
-### 4. Создайте интерфейсы для парсинга и генерации
-В папке `Interfaces` создайте:
-
-- `INetlistParser.cs` — метод `NetlistDocument Parse(string filePath);`
-- `IOutputGenerator.cs` — метод `void Generate(NetlistDocument document, string outputDirectory);`
-- `INetlistSerializer.cs` — методы `Serialize(NetlistDocument)` и `Deserialize(string)`
-
-### 5. Реализуйте JSON-сериализатор
-
-Создайте в `Core` класс `JsonNetlistSerializer`, реализующий `INetlistSerializer`, используя `System.Text.Json`.
-
-### 6. Напишите простой unit-тест (без внешних зависимостей)
-
-Создайте тестовый проект `NetFileConverter.Core.Tests` и напишите тест, который сериализует небольшой объект `NetlistDocument` в JSON и десериализует обратно — проверяет, что данные не потерялись.
-
-### 7. Сделайте коммит
+Создать проект Infrastructure:
 
 ```bash
-git add .
-git commit -m "Добавлена модель NetlistDocument и JSON-сериализатор"
+dotnet new classlib -n NetFileConverter.Infrastructure -f net10.0
+dotnet sln add NetFileConverter.Infrastructure/NetFileConverter.Infrastructure.csproj
 ```
 
----
+Добавить ссылки на Core:
 
-## 📋 После этого мы готовы к следующему шагу
-
-Когда модель готова, мы перейдём к:
-- **Рефакторингу существующих парсеров** (Protel2 и KiCad), чтобы они возвращали `NetlistDocument` вместо прямого вывода.
-- **Настройке DI** в `Program.cs` и внедрению этих интерфейсов в `Worker`.
-
----
-
+```bash
+dotnet add NetFileConverter.Infrastructure/NetFileConverter.Infrastructure.csproj reference NetFileConverter.Core/NetFileConverter.Core.csproj
+```
