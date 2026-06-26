@@ -9,6 +9,7 @@ using Microsoft.Extensions.Logging;
 using System.IO;
 using System.Text.Json;
 using NetFileConverter;
+using System.Reflection;
 
 namespace FolderWatcher
 {
@@ -98,6 +99,8 @@ namespace FolderWatcher
                 .ConfigureAppConfiguration((context, config) =>
                 {
                     config.SetBasePath(Path.GetDirectoryName(configPath));
+                    // Замените строку 100 на:
+                    // config.SetBasePath(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location) ?? AppContext.BaseDirectory);
                     config.AddJsonFile(Path.GetFileName(configPath), optional: false, reloadOnChange: true);
 
                     // Резервный конфиг из папки с exe (только для разработки)
