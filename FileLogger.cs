@@ -5,50 +5,50 @@ using System.Text;
 namespace NetFileConverter
 {
     /// <summary>
-    /// Простой статический логгер для записи отладочной информации в файл.
+    /// Профессиональный потокобезопасный логгер с автоопределением путей в %APPDATA%.
     /// </summary>
     public static class FileLogger
     {
-        private static string? _logPath;
+        private static readonly string _logPath;
+        private static readonly object _lock = new object();
 
-        /// <summary>
-        /// Инициализирует путь к файлу лога.
-        /// </summary>
-        public static void Initialize(string targetFilePath)
+        static FileLogger()
         {
-            string? dir = Path.GetDirectoryName(targetFilePath);
-            // _logPath = Path.Combine(dir ?? AppContext.BaseDirectory, "kicad_debug_log.txt");
-            _logPath = Path.Combine("D:\\Projects\\DotNet\\NetFileConverter\\kicad_debug_log.txt"); // Жёстко задаём путь для отладки
+            // Автоматически находим путь к папке AppData/Roaming
+            string appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+            string logDir = Path.Combine(appData, "NetFileConverter");
+            
+            // Гарантируем, что папка существует
+            Directory.CreateDirectory(logDir);
+            
+            _logPath = Path.Combine(logDir, "kicad_debug_log.txt");
 
-            // При инициализации перезаписываем файл, создавая чистый лог для нового запуска
             try
             {
-                File.WriteAllText(_logPath, $"=== СТАРТ ОТЛАДКИ: {DateTime.Now:yyyy-MM-dd HH:mm:ss} ===\r\n", Encoding.UTF8);
+                // Перезаписываем лог при старте приложения
+                File.WriteAllText(_logPath, $"=== СТАРТ СИСТЕМНОГО ЛОГА: {DateTime.Now:yyyy-MM-dd HH:mm:ss} ===\r\n", Encoding.UTF8);
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Не удалось создать файл лога: {ex.Message}");
+                Console.WriteLine($"Не удалось инициализировать лог-файл: {ex.Message}");
             }
         }
 
-        /// <summary>
-        /// Добавляет строку сообщения в лог-файл.
-        /// </summary>
         public static void Log(string message)
         {
-            if (string.IsNullOrEmpty(_logPath)) return;
-
-            try
+            lock (_lock)
             {
-                // Открываем файл в режиме добавления (append)
-                using (var writer = new StreamWriter(_logPath, true, Encoding.UTF8))
+                try
                 {
-                    writer.WriteLine($"[{DateTime.Now:HH:mm:ss}] {message}");
+                    using (var writer = new StreamWriter(_logPath, true, Encoding.UTF8))
+                    {
+                        writer.WriteLine($"[{DateTime.Now:HH:mm:ss}] {message}");
+                    }
                 }
-            }
-            catch
-            {
-                // Если файл занят или заблокирован, молча игнорируем, чтобы не уронить парсер
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Ошибка записи в лог: {ex.Message}");
+                }
             }
         }
     }
