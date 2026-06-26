@@ -8,30 +8,34 @@ using Microsoft.Extensions.Hosting;
 
 namespace NetFileConverter
 {
+    /// <summary>
+    /// Структура для хранения информации об отслеживаемой папке из JSON.
+    /// </summary>
+    public class WatchedFolder
+    {
+        public string Path { get; set; } = "";
+        public string Format { get; set; } = "KiCad";
+    }
+
     public class Worker : BackgroundService
     {
         private readonly KicadWatchdog _watchdog = new KicadWatchdog();
         private readonly NetlistProcessor _processor = new NetlistProcessor();
         private readonly IConfiguration _configuration;
-        private readonly List<string> _watchDirectories = new List<string>();
+        
+        // Единственное и правильное объявление динамического списка папок
+        private readonly List<WatchedFolder> _watchDirectories = new List<WatchedFolder>();
 
-        // Конструктор теперь принимает конфигурацию через Dependency Injection автоматически
         public Worker(IConfiguration configuration)
         {
             _configuration = configuration;
         }
 
-        /// <summary>
-        /// Загружает список папок из секции конфигурации appsettings.json
-        /// </summary>
-        // Вверху класса вместо List<string> _watchDirectories делаем список объектов:
-        private readonly List<WatchedFolder> _watchDirectories = new List<WatchedFolder>();
-
         private void LoadDirectoriesFromConfig()
         {
             _watchDirectories.Clear();
             
-            // Читаем правильную секцию "WatcherSettings:SourceDirectories"
+            // Читаем вложенную секцию "WatcherSettings:SourceDirectories" из вашего JSON
             var foldersSection = _configuration.GetSection("WatcherSettings:SourceDirectories");
             if (!foldersSection.Exists())
             {
@@ -54,12 +58,10 @@ namespace NetFileConverter
             FileLogger.Log($"Итого загружено папок из конфигурации: {_watchDirectories.Count}");
         }
 
-
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
             FileLogger.Log("Фоновая служба Worker успешно инициализирована .NET-хостом.");
 
-            // Динамически загружаем папки из JSON
             try
             {
                 LoadDirectoriesFromConfig();
@@ -69,55 +71,56 @@ namespace NetFileConverter
                 FileLogger.Log($"Ошибка чтения конфигурации JSON: {ex.Message}");
             }
 
-            if (_watchDirectories.Count == 0)
-            {
-                FileLogger.Log("ВНИМАНИЕ: Список отслеживаемых папок пуст. Ожидание настройки через форму.");
-            }
-
             // 1. Первоначальный автоматический анализ существующих файлов при старте
             FileLogger.Log("Выполнение первоначального анализа существующих файлов...");
-            foreach (var dir in _watchDirectories)
+            foreach (var folder in _watchDirectories)
             {
-                if (!Directory.Exists(dir))
+                if (!Directory.Exists(folder.Path))
                 {
-                    FileLogger.Log($"Папка не найдена при анализе: {dir}");
+                    FileLogger.Log($"Папка не найдена при анализе: {folder.Path}");
                     continue;
                 }
 
-                // Обрабатываем штатные файлы .net
-                foreach (var file in Directory.GetFiles(dir, "*.net"))
+                // Вызываем наш парсер только для папок с форматом KiCad
+                if (folder.Format == "KiCad")
                 {
-                    _processor.ParseAndSimplify(file);
+                    foreach (var file in Directory.GetFiles(folder.Path, "*.net"))
+                    {
+                        _processor.ParseAndSimplify(file);
+                    }
+                    foreach (var file in Directory.GetFiles(folder.Path, "*_orig.txt"))
+                    {
+                        _processor.ParseAndSimplify(file);
+                    }
                 }
-                
-                // Проверяем тестовые файлы конфигурации
-                foreach (var file in Directory.GetFiles(dir, "*_orig.txt"))
+                else if (folder.Format == "Protel2")
                 {
-                    _processor.ParseAndSimplify(file);
+                    FileLogger.Log($"[Инфо] Папка {folder.Path} имеет формат Protel2. Пропуск анализа KiCad.");
                 }
             }
 
-            // 2. Передаем динамические папки в KicadWatchdog
-            if (_watchDirectories.Count > 0)
+            // 2. Настраиваем KicadWatchdog для мониторинга в реальном времени
+            var pathsToWatch = new List<string>();
+            foreach (var folder in _watchDirectories)
             {
-                _watchdog.StartMonitoring(_watchDirectories);
+                if (folder.Format == "KiCad" && Directory.Exists(folder.Path))
+                {
+                    pathsToWatch.Add(folder.Path);
+                }
             }
 
-            // Поддерживаем жизнь службы, пока .NET-хост работает
+            if (pathsToWatch.Count > 0)
+            {
+                _watchdog.StartMonitoring(pathsToWatch);
+            }
+
             while (!stoppingToken.IsCancellationRequested)
             {
                 await Task.Delay(1000, stoppingToken);
             }
 
-            // Освобождаем ресурсы при выходе
             _watchdog.Dispose();
             FileLogger.Log("Служба Worker остановлена.");
         }
-    }
-
-    private class WatchedFolder
-    {
-        public string Path { get; set; } = "";
-        public string Format { get; set; } = "KiCad";
     }
 }
