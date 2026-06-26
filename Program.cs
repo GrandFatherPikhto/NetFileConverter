@@ -4,34 +4,14 @@ using System.Windows.Forms;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.Logging.Console;
 using Microsoft.Extensions.Logging;
 using System.IO;
 using System.Text.Json;
 using NetFileConverter;
-using System.Reflection;
-
 using NetFileConverter.Core.Interfaces;
 using NetFileConverter.Core.Serialization;
 using NetFileConverter.Infrastructure.Generators;
 using NetFileConverter.Infrastructure.Parsers;
-
-// ... внутри ConfigureServices:
-
-services.AddHostedService<Worker>();
-
-// Регистрируем парсеры
-services.AddSingleton<INetlistParser, KiCadParser>();
-services.AddSingleton<INetlistParser, Protel2Parser>();
-
-// Регистрируем генераторы
-services.AddSingleton<IOutputGenerator, NetlistGenerator>();
-services.AddSingleton<IOutputGenerator, BomGenerator>();
-services.AddSingleton<IOutputGenerator, DotGenerator>();
-services.AddSingleton<IOutputGenerator, MermaidGenerator>();
-
-// Регистрируем сериализатор
-services.AddSingleton<INetlistSerializer, JsonNetlistSerializer>();
 
 namespace FolderWatcher
 {
@@ -58,7 +38,6 @@ namespace FolderWatcher
             if (File.Exists(configPath))
                 return;
 
-            // Пытаемся скопировать из папки, где лежит exe (старая версия)
             string exePath = System.Environment.ProcessPath ?? AppContext.BaseDirectory;
             string exeDir = Path.GetDirectoryName(exePath) ?? AppContext.BaseDirectory;
             string oldConfigPath = Path.Combine(exeDir, "appsettings.json");
@@ -69,7 +48,6 @@ namespace FolderWatcher
                 return;
             }
 
-            // Создаём конфиг по умолчанию: новый формат (массив объектов)
             var defaultConfig = new
             {
                 Logging = new
@@ -94,25 +72,20 @@ namespace FolderWatcher
         {
             ApplicationConfiguration.Initialize();
 
-            // Гарантируем, что конфигурационный файл существует и доступен для записи
             EnsureConfigExists();
             string configPath = GetConfigPath();
 
-            // Меняем рабочую директорию на папку с exe (для логов, ресурсов и т.п.)
             string exePath = System.Environment.ProcessPath ?? AppContext.BaseDirectory;
             string exeDir = Path.GetDirectoryName(exePath) ?? AppContext.BaseDirectory;
             Directory.SetCurrentDirectory(exeDir);
 
-            // Строим хост с указанием пути к конфигурации в AppData
             var builder = new HostBuilder()
                 .ConfigureAppConfiguration((context, config) =>
                 {
-                    config.SetBasePath(Path.GetDirectoryName(configPath));
-                    // Замените строку 100 на:
-                    // config.SetBasePath(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location) ?? AppContext.BaseDirectory);
+                    // Исправлено предупреждение CS8604 проверкой на null через оператор ??
+                    config.SetBasePath(Path.GetDirectoryName(configPath) ?? AppContext.BaseDirectory);
                     config.AddJsonFile(Path.GetFileName(configPath), optional: false, reloadOnChange: true);
 
-                    // Резервный конфиг из папки с exe (только для разработки)
                     string localConfig = Path.Combine(exeDir, "appsettings.json");
                     if (File.Exists(localConfig))
                         config.AddJsonFile(localConfig, optional: true, reloadOnChange: false);
@@ -125,16 +98,20 @@ namespace FolderWatcher
                 })
                 .ConfigureServices((context, services) =>
                 {
-                    // Регистрируем парсер (по умолчанию KiCad, но можно сделать фабрику)
-                    services.AddScoped<INetlistParser, KiCadParser>(); // или Protel2Parser
+                    // Объединили все ваши регистрации в один чистый DI-контейнер
+                    services.AddSingleton<INetlistSerializer, JsonNetlistSerializer>();
+
+                    // Регистрируем ОБА парсера (чтобы Worker мог выбирать нужный)
+                    services.AddSingleton<INetlistParser, KiCadParser>();
+                    services.AddSingleton<INetlistParser, Protel2Parser>();
 
                     // Регистрируем все генераторы
-                    services.AddScoped<IOutputGenerator, NetlistGenerator>();
-                    services.AddScoped<IOutputGenerator, BomGenerator>();
-                    services.AddScoped<IOutputGenerator, DotGenerator>();
-                    services.AddScoped<IOutputGenerator, MermaidGenerator>();
+                    services.AddSingleton<IOutputGenerator, NetlistGenerator>();
+                    services.AddSingleton<IOutputGenerator, BomGenerator>();
+                    services.AddSingleton<IOutputGenerator, DotGenerator>();
+                    services.AddSingleton<IOutputGenerator, MermaidGenerator>();
 
-                    // Регистрируем Worker
+                    // Добавляем фоновую службу и форму настроек
                     services.AddHostedService<Worker>();
                     services.AddTransient<SettingsForm>();
                 });
@@ -142,7 +119,6 @@ namespace FolderWatcher
             _host = builder.Build();
             _host.StartAsync().GetAwaiter().GetResult();
 
-            // Иконка трея
             _trayIcon = new NotifyIcon
             {
                 Icon = Icon.ExtractAssociatedIcon(System.Environment.ProcessPath ?? AppContext.BaseDirectory),

@@ -20,13 +20,6 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>
-
-  <ItemGroup>
-    <!-- Исключаем файлы тестов из компиляции основного проекта -->
-    <Compile Remove="NetFileConverter.Core.Tests\**" />
-    <EmbeddedResource Remove="NetFileConverter.Core.Tests\**" />
-    <None Remove="NetFileConverter.Core.Tests\**" />
-  </ItemGroup>
   
   <!-- Обход ошибки MSB4057 -->
   <Target Name="CreateManifestResourceNames" />
@@ -36,5 +29,25 @@
     <Compile Remove="old\**" />
     <EmbeddedResource Remove="old\**" />
     <None Include="old\**" />
+
+    <!-- Исключаем файлы тестов -->
+    <Compile Remove="NetFileConverter.Core.Tests\**" />
+    <EmbeddedResource Remove="NetFileConverter.Core.Tests\**" />
+    <None Remove="NetFileConverter.Core.Tests\**" />
+
+    <!-- Исключаем файлы инфраструктуры -->
+    <Compile Remove="NetFileConverter.Infrastructure\**" />
+    <EmbeddedResource Remove="NetFileConverter.Infrastructure\**" />
+    <None Remove="NetFileConverter.Infrastructure\**" />
+
+    <!-- КРИТИЧЕСКИ ВАЖНО: Исключаем файлы Core -->
+    <Compile Remove="NetFileConverter.Core\**" />
+    <EmbeddedResource Remove="NetFileConverter.Core\**" />
+    <None Remove="NetFileConverter.Core\**" />
   </ItemGroup>
+    
+  <ItemGroup>
+    <ProjectReference Include="NetFileConverter.Infrastructure\NetFileConverter.Infrastructure.csproj" />
+  </ItemGroup>
+
 </Project>

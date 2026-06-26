@@ -18,7 +18,8 @@ public class Worker : BackgroundService
     private readonly INetlistSerializer _serializer;
     private readonly ConcurrentDictionary<string, DateTime> _lastProcessed = new();
     private readonly ConcurrentQueue<string> _queue = new();
-    private readonly Timer _timer;
+    // private readonly Timer _timer;
+    private readonly System.Threading.Timer _timer;
     private readonly List<FileSystemWatcher> _watchers = new();
     private bool _isProcessing;
 
@@ -34,7 +35,8 @@ public class Worker : BackgroundService
         _parsers = parsers;
         _generators = generators;
         _serializer = serializer;
-        _timer = new Timer(ProcessQueue, null, Timeout.Infinite, Timeout.Infinite);
+        // _timer = new Timer(ProcessQueue, null, Timeout.Infinite, Timeout.Infinite);
+        _timer = new System.Threading.Timer(ProcessQueue, null, Timeout.Infinite, Timeout.Infinite);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
